@@ -24,8 +24,36 @@ import lyn from './assets/lyn.jpg'
 import analeth from './assets/analeth.jpg'
 import elimina from './assets/elimina.jpg'
 import bea from './assets/bea.jpg'
+import { Volume2, VolumeOff } from 'lucide-react'
 
 function App() {
+ const [videoMuted, setVideoMuted] = useState({})
+ const videoRefs = useRef({});
+
+// 2. I-update ang toggle function
+// 1. Gamitin ang null para sa "walang naka-unmute"
+const [activeVideoIndex, setActiveVideoIndex] = useState(null);
+
+// 2. I-update ang toggle function
+const toggleMute = (index) => {
+  setActiveVideoIndex((prevIndex) => {
+    // Kung ang pinindot ay ang kasalukuyang active, i-off natin (null)
+    // Kung iba ang pinindot, i-set natin ito bilang bagong active
+    const nextIndex = prevIndex === index ? null : index;
+
+    // I-sync ang DOM elements base sa bagong index
+    Object.keys(videoRefs.current).forEach((key) => {
+      const video = videoRefs.current[key];
+      if (video) {
+        // Kung ang index ng video ay tugma sa nextIndex, i-unmute
+        // Kung hindi, i-mute
+        video.muted = parseInt(key) !== nextIndex;
+      }
+    });
+
+    return nextIndex;
+  });
+};
   const [graduates] = useState([
     { id: 1, name: "Christian P. Heje", course: "BS Information Technology", quote: "Strive for greatness. The journey is just beginning.", image: christian },
     { id: 2, name: "Nico Jay Balonso", course: "BS Information Technology", quote: "The future belongs to those who believe in the beauty of their dreams.", image: nico },
@@ -375,26 +403,45 @@ function App() {
 
         <div className="w-full overflow-hidden">
           <div className="animate-marquee-left gap-4 md:gap-6 px-4">
-            {collageVideos.map((src, idx) => (
-              <div key={`vid1-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md transform -rotate-1 hover:rotate-0 transition-transform duration-300 flex-shrink-0">
-                <video 
-                  src={src} 
-                  autoPlay 
-                  loop 
-                  muted 
-                  playsInline
-                  className="w-full h-64 md:h-80 object-cover object-center rounded-lg mb-3 saturate-110 contrast-105 bg-[#f5f1e9]"
-                />
-                <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
-              </div>
-            ))}
+ {collageVideos.map((src, idx) => (
+  // 1. Idinagdag ang 'relative' class dito
+  <div key={`vid1-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md transform -rotate-1 hover:rotate-0 transition-transform duration-300 flex-shrink-0">
+    <video 
+      ref={(el) => (videoRefs.current[idx] = el)}
+      src={src} 
+      autoPlay 
+      loop 
+      muted={activeVideoIndex !== idx} // Muted kung HINDI ito ang active
+      playsInline 
+      className="w-full h-64 md:h-80 object-cover object-center rounded-lg mb-3 saturate-110 contrast-105 bg-[#f5f1e9]"
+    />
+    
+    <button
+      onClick={(e) => {
+        e.stopPropagation(); // Iwasan ang pag-trigger ng ibang click events
+        toggleMute(idx);
+      }}
+      className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md hover:bg-black transition flex items-center justify-center z-10"
+    >
+      {/* 2. Inayos ang logic: Kapag active, dapat Volume2 (may tunog) */}
+      {activeVideoIndex === idx ? (
+        <Volume2 size={16} /> 
+      ) : (
+        <VolumeOff size={16} />
+      )}
+    </button>
+    
+    <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
+  </div>
+))}
             {collageVideos.map((src, idx) => (
               <div key={`vid2-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md transform rotate-1 hover:rotate-0 transition-transform duration-300 flex-shrink-0">
                 <video 
+                ref={(el) => (videoRefs.current[idx] = el)}
                   src={src} 
                   autoPlay 
                   loop 
-                  muted 
+                  muted= {true}
                   playsInline
                   className="w-full h-64 md:h-80 object-cover object-center rounded-lg mb-3 saturate-110 contrast-105 bg-[#f5f1e9]"
                 />
