@@ -44,7 +44,7 @@ function App() {
       tag: "Message to My Classmates",
       title: "Through the Deadlines and Coffee Runs",
       body: "We spent years chasing points, debugging broken codes, and sharing snacks in hallways. This platform is our living archive—a space where our best memories won't fade. Let's look back with pride and forward with absolute hope.",
-      author: "Batch 2026 Editorial"
+      author: ""
     }
   ])
 
