@@ -188,7 +188,7 @@ function App() {
               {/* --- NAMES INSIDE THE OFFICIAL VIDEO BOX --- */}
               <div className="text-[10px] md:text-xs tracking-widest uppercase font-mono text-[#787266] max-w-2xl border-t border-[#decbba]/60 pt-4 mt-2">
                 <span className="text-[#3b352b] font-serif tracking-normal normal-case italic mr-1">Featuring:</span>
-                Christian • Nico • Jane • Patricia • Zara • Lyn • Analeth • Elmina • Bea • Faith • Bealyn
+                Christian • Nico • Jane • Patricia • Zara • Lyn • Analeth • Elmina • Bea • Jinky • Faith • Bealyn
               </div>
 
             </div>
