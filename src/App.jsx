@@ -43,7 +43,7 @@ function App() {
       id: 1,
       tag: "Message to My Classmates",
       title: "Through the Deadlines and Coffee Runs",
-      body: "We spent years chasing points, debugging broken codes, and sharing snacks in hallways. This platform is our living archive—a space where our best memories won't fade. Let's look back with pride and forward with absolute hope.",
+      body: "We spent years chasing points, debugging broken codes, and sharing snacks in hallways. This platform is our living archive a space where our best memories won't fade. Let's look back with pride and forward with absolute hope.",
       author: ""
     }
   ])
@@ -60,23 +60,20 @@ function App() {
     video1, video2, video3
   ]
 
-  // Track Positions at Loop Controls
   const [translateX, setTranslateX] = useState(0);
   const isPaused = useRef(false);
   const trackRef = useRef(null);
 
   useEffect(() => {
     let animationFrameId;
-    const speed = 0.65; // Tamang-tamang bilis para sa pagbasa ng marquee card entries
+    const speed = 0.65;
 
     const updateMarquee = () => {
       if (!isPaused.current && trackRef.current) {
-        // Kunin ang kabuuang sukat ng kalahating track (isang buong set ng graduates array)
         const halfWidth = trackRef.current.scrollWidth / 2;
 
         setTranslateX((prev) => {
           const next = prev - speed;
-          // Kapag lumampas na sa kalahati, ibalik sa simula para maging seamless loop
           if (Math.abs(next) >= halfWidth) {
             return 0;
           }
@@ -90,20 +87,16 @@ function App() {
     return () => cancelAnimationFrame(animationFrameId);
   }, []);
 
-  // Button interaction mechanism na hahatak sa track kahit umaandar ito
   const handleScrollButton = (direction) => {
     isPaused.current = true;
-    const shiftAmount = window.innerWidth < 768 ? 290 : 352; // Width + gap ng cards
+    const shiftAmount = window.innerWidth < 768 ? 290 : 352;
 
     setTranslateX((prev) => {
       let updatedOffset = direction === 'left' ? prev + shiftAmount : prev - shiftAmount;
-      
-      // Safety limits para hindi lumipad ang cards sa labas ng view track
       if (updatedOffset > 0) updatedOffset = 0;
       return updatedOffset;
     });
 
-    // Pagkatapos ng 3 segundo, awtomatikong magpapatuloy ulit ang kusang pag-animate pakaliwa
     setTimeout(() => {
       isPaused.current = false;
     }, 3000);
@@ -136,10 +129,9 @@ function App() {
         }
       `}</style>
 
-      {/* --- HERO SECTION WITH GRADUATION CAP --- */}
+      {/* --- HERO SECTION --- */}
       <header className="max-w-5xl mx-auto text-center pt-28 md:pt-36 pb-16 md:pb-20 px-6">
         <div className="flex flex-col items-center justify-center gap-2 mb-4">
-          {/* Ang Graduation Cap (Toga Hat) 🎓 sa ibabaw ng Batch text */}
           <div className="text-5xl md:text-7xl animate-bounce duration-1000">
             🎓
           </div>
@@ -189,9 +181,15 @@ function App() {
                 The Official Batch Video
               </h3>
               
-              <p className="text-[#524f4a] text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light text-center px-2">
+              <p className="text-[#524f4a] text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light text-center px-2 mb-6">
                 I am currently fine-tuning and editing this video compilation for all of us. It will bring together our untold stories, inside jokes, and unforgettable milestones spanning from <span className="font-semibold text-[#5c4e3c]">1st Year to 4th Year</span>. Stay tuned!
               </p>
+
+              {/* --- NAMES INSIDE THE OFFICIAL VIDEO BOX --- */}
+              <div className="text-[10px] md:text-xs tracking-widest uppercase font-mono text-[#787266] max-w-2xl border-t border-[#decbba]/60 pt-4 mt-2">
+                <span className="text-[#3b352b] font-serif tracking-normal normal-case italic mr-1">Featuring:</span>
+                Christian • Nico • Jane • Patricia • Zara • Lyn • Analeth • Elmina • Bea • Faith • Bealyn
+              </div>
 
             </div>
           </div>
@@ -227,7 +225,7 @@ function App() {
         </div>
       </section>
 
-      {/* --- GRADUATES SECTION (ALWAYS ON SMOOTH MARQUEE + 100% GAGANANG BUTTONS) --- */}
+      {/* --- GRADUATES SECTION --- */}
       <section className="w-full bg-[#fbfaf7] mb-20 md:mb-28 relative overflow-hidden">
         <div className="max-w-5xl mx-auto px-6 mb-10 flex items-center justify-between">
           <div className="flex items-center gap-6 w-full">
@@ -236,10 +234,8 @@ function App() {
           </div>
         </div>
 
-        {/* Outer Viewport Box */}
         <div className="relative w-full px-4 md:px-12 select-none">
           
-          {/* Left Button (Pwede silang bumalik kahit umaandar) */}
           <button 
             onClick={() => handleScrollButton('left')} 
             className="absolute left-6 md:left-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white hover:border-[#5c4e3c] transition-all duration-300 transform scale-90 md:scale-100"
@@ -250,7 +246,6 @@ function App() {
             </svg>
           </button>
           
-          {/* Right Button */}
           <button 
             onClick={() => handleScrollButton('right')} 
             className="absolute right-6 md:right-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white hover:border-[#5c4e3c] transition-all duration-300 transform scale-90 md:scale-100"
@@ -261,7 +256,6 @@ function App() {
             </svg>
           </button>
 
-          {/* Mask Frame para itago ang sumosobrang cards */}
           <div className="w-full overflow-hidden py-4 px-2">
             <div 
               ref={trackRef}
@@ -276,7 +270,6 @@ function App() {
               }}
             >
               
-              {/* Unang Buong Set */}
               {graduates.map((grad) => (
                 <div 
                   key={`set1-${grad.id}`} 
@@ -305,7 +298,6 @@ function App() {
                 </div>
               ))}
 
-              {/* Pangalawang Set (Seamless Looping Frame Mirror) */}
               {graduates.map((grad) => (
                 <div 
                   key={`set2-${grad.id}`} 
@@ -413,9 +405,11 @@ function App() {
         </div>
       </section>
 
-      {/* --- FOOTER --- */}
-      <footer className="max-w-5xl mx-auto px-6 py-12 md:py-16 text-center text-xs md:text-sm text-[#a19b8f] font-serif italic">
-        <p>Developed by Christian</p>
+      {/* --- CLEAN SIMPLE FOOTER --- */}
+      <footer className="w-full bg-[#fbfaf7] text-[#474540] py-12 px-6  text-center text-[10px] tracking-wider uppercase font-mono">
+        <div>
+          © {new Date().getFullYear()} Batch 2026 Production. All Memories Archived.
+        </div>
       </footer>
 
     </div>
