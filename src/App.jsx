@@ -85,6 +85,7 @@ function App() {
 
   // --- FIREBASE FIRESTORE LOGIC ---
   const [messages, setMessages] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false); // State para sa Loading Indicator
   
   // LocalStorage tracking para malaman ng device na ito kung aling documents ang pino-post mo (Para sa delete visibility)
   const [myPostIds, setMyPostIds] = useState(() => {
@@ -129,10 +130,12 @@ function App() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // Pagsusumite ng mensahe papuntang Firestore
+  // Pagsusumite ng mensahe papuntang Firestore (May loading state na)
   const handleSubmitMessage = async (e) => {
     e.preventDefault();
-    if (!formData.author || !formData.body || !formData.title) return;
+    if (!formData.author || !formData.body || !formData.title || isSubmitting) return;
+
+    setIsSubmitting(true); // Simulan ang loading animation
 
     try {
       const messagesCollection = collection(db, 'messages');
@@ -148,6 +151,8 @@ function App() {
       setFormData({ author: '', title: '', body: '' });
     } catch (error) {
       console.error("Error adding document to Firestore: ", error);
+    } finally {
+      setIsSubmitting(false); // Tapusin ang loading animation kahit magka-error o mag-success
     }
   };
 
@@ -491,7 +496,7 @@ function App() {
           <div className="w-full h-[1px] bg-[#e8e2d5]" />
         </div>
 
-        {/* --- MESSAGES SLIDER WITH POP-UP EVENT --- */}
+        {/* --- MESSAGES SLIDER --- */}
         <div className="relative w-full px-4 select-none mb-14">
           <button onClick={() => handleMsgScrollButton('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300">
             <ChevronLeft size={18} />
@@ -513,7 +518,6 @@ function App() {
             >
               {messages.length > 0 ? (
                 <>
-                  {/* Single Loop Setup para walang duplicate sa UI */}
                   {messages.map((msg, index) => (
                     <div 
                       key={`msg-${msg.id}-${index}`} 
@@ -544,7 +548,7 @@ function App() {
           </div>
         </div>
 
-        {/* --- FORM SUBMISSION BOX --- */}
+        {/* --- FORM SUBMISSION BOX (WITH LOADING SAVING EFFECT) --- */}
         <div className="max-w-xl mx-auto bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)]">
           <h3 className="font-serif text-xl font-normal text-[#1a1a1a] mb-2">Leave a Message</h3>
           <p className="text-xs text-[#787266] mb-6 leading-relaxed">Share your favorite memories or wishes directly to the infinite slider grid board.</p>
@@ -552,11 +556,11 @@ function App() {
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Who are you? (Name)</label>
-              <input type="text" name="author" value={formData.author} onChange={handleInputChange} placeholder="e.g., Christian P. Heje" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
+              <input type="text" name="author" value={formData.author} onChange={handleInputChange} placeholder="Your name" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60 disabled:cursor-not-allowed" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g To my Friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60 disabled:cursor-not-allowed" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
@@ -567,23 +571,35 @@ function App() {
                 rows="4" 
                 placeholder="Write your beautiful memory here..." 
                 required 
-                className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none"
+                disabled={isSubmitting}
+                className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             
             <button 
               type="submit" 
-              className="w-full bg-[#5c4e3c] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-[#473b2c] shadow-sm transition-colors uppercase tracking-wider mt-2"
+              disabled={isSubmitting}
+              className="w-full bg-[#5c4e3c] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-[#473b2c] shadow-sm transition-all uppercase tracking-wider mt-2 flex items-center justify-center gap-2 disabled:bg-[#8c7e6b] disabled:cursor-not-allowed"
             >
-              Post Message
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Sending</span>
+                </>
+              ) : (
+                <span>Post Message</span>
+              )}
             </button>
           </form>
         </div>
       </section>
 
       {/* --- FOOTER --- */}
-      <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Myrtle Christian School Inc. • Frontend System Archive
+      <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider font-mono">
+        © 2026 Developed by christian.
       </footer>
 
     </div>
