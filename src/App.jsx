@@ -650,7 +650,7 @@ function App() {
 
       {/* --- FOOTER --- */}
       <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Myrtle Christian School Inc. • Frontend System Archive
+        © 2026 Developed by christian.
       </footer>
 
     </div>
