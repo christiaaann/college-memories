@@ -370,8 +370,8 @@ function App() {
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#fbfaf7]/80 backdrop-blur-xl">
           <div className="bg-white max-w-md w-full rounded-3xl p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(40,35,30,0.12)] text-center">
             {/* <span className="text-4xl block mb-4">✨</span> */}
-            {/* <h3 className="font-serif text-2xl font-normal text-[#1a1a1a] mb-2">Welcome, Graduate!</h3>
-            <p className="text-xs text-[#66635e] leading-relaxed mb-6"></p> */}
+            <h3 className="font-serif text-2xl font-normal text-[#1a1a1a] mb-2">COLLEGE ARCHIVE</h3>
+            <p className="text-xs text-[#66635e] leading-relaxed mb-6"></p>
             <form onSubmit={handleSaveName} className="space-y-4">
               <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Your name" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#5c4e3c] text-center font-medium" />
               <button type="submit" className="w-full bg-[#5c4e3c] text-white py-3 rounded-xl text-xs font-semibold hover:bg-[#473b2c] shadow-sm uppercase tracking-wider transition-colors">Enter</button>
