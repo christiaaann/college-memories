@@ -11,9 +11,32 @@ import image9 from './assets/image9.jpg'
 import image10 from './assets/image10.jpg'
 import image11 from './assets/image11.jpg'
 import image12 from './assets/image12.jpg'
+import image13 from './assets/image13.jpg'
+import image14 from './assets/image14.jpg'
+import image15 from './assets/image15.jpg'
+import image16 from './assets/image16.jpg'
+import image17 from './assets/image17.jpg'
+import image18 from './assets/image18.jpg'
+import image19 from './assets/image19.jpg'
+import image20 from './assets/image20.jpg'
+import image21 from './assets/image21.jpg'
+import image22 from './assets/image22.jpg'
+import image23 from './assets/image23.jpg'
+import image24 from './assets/image24.jpg'
+import image25 from './assets/image25.jpg'
+import image26 from './assets/image26.jpg'
+import image27 from './assets/image27.jpg'
+import image28 from './assets/image28.jpg'
+import image29 from './assets/image29.jpg'
+import image30 from './assets/image30.jpg'
+import image31 from './assets/image31.jpg'
+
+
 import video1 from './assets/video1.mp4'
 import video2 from './assets/video2.mp4'
 import video3 from './assets/video3.mp4'
+import video4 from './assets/video4.mp4'
+import video5 from './assets/video5.mp4'
 
 import christian from './assets/christian.jpg'
 import nico from './assets/nico.jpg'
@@ -23,6 +46,7 @@ import zara from './assets/zara.jpg'
 import lyn from './assets/lyn.jpg'
 import analeth from './assets/analeth.jpg'
 import elimina from './assets/elimina.jpg'
+import jinky from './assets/jinky.jpg'
 import bea from './assets/bea.jpg'
 import { Volume2, VolumeOff } from 'lucide-react'
 
@@ -63,7 +87,8 @@ const toggleMute = (index) => {
     { id: 6, name: "Lyn Garrote", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: lyn },
     { id: 7, name: "Analeth Garrote", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: analeth },
     { id: 8, name: "Elmina Gepiga", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: elimina },
-    { id: 9, name: "Bea Barcelona", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: bea },
+     { id: 9, name: "Jinky Dublin", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: jinky },
+    { id: 10, name: "Bea Barcelona", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: bea },
   ])
 
   const [messages] = useState([
@@ -77,15 +102,21 @@ const toggleMute = (index) => {
   ])
 
   const marqueeImages = [
-    image1, image2, image3, image4, image5, image6, image7, image8, image9, image10, image11
+   image1, image2, image3, image4, image5, image6, image7, image8, image9, image10,
+  image11, image12, image13, image14, image15, image16, image17, image18, image19, image20,
+  image21, image22, image23, image24, image25, image26, image27, image28, image29, image30,
+  image31
   ]
 
   const collageImages = [
-    image1, image2, image3, image4, image5, image6, image7, image8, image9, image10, image11
+  image1, image2, image3, image4, image5, image6, image7, image8, image9, image10,
+  image11, image12, image13, image14, image15, image16, image17, image18, image19, image20,
+  image21, image22, image23, image24, image25, image26, image27, image28, image29, image30,
+  image31
   ]
 
   const collageVideos = [
-    video1, video2, video3
+    video1, video2, video3, video4, video5
   ]
 
   const [translateX, setTranslateX] = useState(0);
@@ -145,12 +176,12 @@ const toggleMute = (index) => {
         .animate-marquee-left {
           display: flex;
           width: max-content;
-          animation: marqueeLeft 45s linear infinite;
+          animation: marqueeLeft 100s linear infinite;
         }
         .animate-marquee-right {
           display: flex;
           width: max-content;
-          animation: marqueeRight 35s linear infinite;
+          animation: marqueeRight 100s linear infinite;
         }
         .animate-marquee-left:hover, .animate-marquee-right:hover {
           animation-play-state: paused;
@@ -159,8 +190,8 @@ const toggleMute = (index) => {
 
       {/* --- HERO SECTION --- */}
       <header className="max-w-5xl mx-auto text-center pt-28 md:pt-36 pb-16 md:pb-20 px-6">
-        <div className="flex flex-col items-center justify-center gap-2 mb-4">
-          <div className="text-5xl md:text-7xl animate-bounce duration-1000">
+        <div className="flex flex-col relative items-center justify-center gap-2 mb-4">
+          <div className="text-5xl absolute -top-8 md:text-7xl  duration-1000">
             🎓
           </div>
           <h1 className="font-serif text-5xl md:text-8xl font-normal tracking-tight text-[#1a1a1a] leading-none">
@@ -206,11 +237,11 @@ const toggleMute = (index) => {
               </div>
               
               <h3 className="font-serif text-2xl md:text-4xl font-normal mb-4 text-[#1a1a1a] tracking-tight">
-                The Official Batch Video
+                Film by Christian
               </h3>
               
               <p className="text-[#524f4a] text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light text-center px-2 mb-6">
-                I am currently fine-tuning and editing this video compilation for all of us. It will bring together our untold stories, inside jokes, and unforgettable milestones spanning from <span className="font-semibold text-[#5c4e3c]">1st Year to 4th Year</span>. Stay tuned!
+                I am currently fine tuning and editing this video compilation for all of us. It will bring together our untold stories, inside jokes, and unforgettable milestones spanning from <span className="font-semibold text-[#5c4e3c]">1st Year to 4th Year</span>. Stay tuned!
               </p>
 
               {/* --- NAMES INSIDE THE OFFICIAL VIDEO BOX --- */}
@@ -221,35 +252,6 @@ const toggleMute = (index) => {
 
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* --- LETTERS & REFLECTIONS SECTION --- */}
-      <section className="max-w-5xl mx-auto px-6 mb-24 md:mb-32">
-        <div className="flex items-center gap-6 mb-12 md:mb-16">
-          <h2 className="font-serif text-2xl md:text-4xl font-normal tracking-tight text-[#1a1a1a] whitespace-nowrap">Letters & Reflections</h2>
-          <div className="w-full h-[1px] bg-[#e8e2d5]" />
-        </div>
-
-        <div className="max-w-3xl mx-auto">
-          {messages.map((msg) => (
-            <div key={msg.id} className="bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-8 md:p-10 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] transition-colors duration-300">
-              <div>
-                <span className="text-[10px] font-semibold tracking-wider uppercase text-[#8c7e6b] bg-[#f4f0e8] px-3 py-1 rounded-md border border-[#e8e2d5]">
-                  {msg.tag}
-                </span>
-                <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mt-5 mb-3">
-                  {msg.title}
-                </h3>
-                <p className="text-[#524f4a] text-sm md:text-base leading-relaxed font-light text-justify">
-                  {msg.body}
-                </p>
-              </div>
-              <div className="mt-8 pt-5 border-t border-[#f4f0e8] text-right">
-                <span className="font-serif italic text-xs md:text-sm text-[#8c7e6b]">— {msg.author}</span>
-              </div>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -434,7 +436,7 @@ const toggleMute = (index) => {
           <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
         </div>
       ))}
-            {collageVideos.map((src, idx) => (
+            {/* {collageVideos.map((src, idx) => (
               <div key={`vid2-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md transform rotate-1 hover:rotate-0 transition-transform duration-300 flex-shrink-0">
                 <video 
                 ref={(el) => (videoRefs.current[idx] = el)}
@@ -447,15 +449,45 @@ const toggleMute = (index) => {
                 />
                 <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
               </div>
-            ))}
+            ))} */}
           </div>
         </div>
       </section>
 
+            {/* --- LETTERS & REFLECTIONS SECTION --- */}
+      <section className="max-w-5xl mx-auto px-6 mb-24 md:mb-32">
+        <div className="flex items-center gap-6 mb-12 md:mb-16">
+          <h2 className="font-serif text-2xl md:text-4xl font-normal tracking-tight text-[#1a1a1a] whitespace-nowrap">Letters & Reflections</h2>
+          <div className="w-full h-[1px] bg-[#e8e2d5]" />
+        </div>
+
+        <div className="max-w-3xl mx-auto">
+          {messages.map((msg) => (
+            <div key={msg.id} className="bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-8 md:p-10 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] transition-colors duration-300">
+              <div>
+                <span className="text-[10px] font-semibold tracking-wider uppercase text-[#8c7e6b] bg-[#f4f0e8] px-3 py-1 rounded-md border border-[#e8e2d5]">
+                  {msg.tag}
+                </span>
+                <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mt-5 mb-3">
+                  {msg.title}
+                </h3>
+                <p className="text-[#524f4a] text-sm md:text-base leading-relaxed font-light text-justify">
+                  {msg.body}
+                </p>
+              </div>
+              <div className="mt-8 pt-5 border-t border-[#f4f0e8] text-right">
+                <span className="font-serif italic text-xs md:text-sm text-[#8c7e6b]">— {msg.author}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+
       {/* --- CLEAN SIMPLE FOOTER --- */}
-      <footer className="w-full bg-[#fbfaf7] text-[#474540] py-12 px-6  text-center text-[10px] tracking-wider uppercase font-mono">
+      <footer className="w-full bg-[#fbfaf7] text-[#474540] py-12 px-6  text-center text-[10px] tracking-wider font-mono">
         <div>
-          © {new Date().getFullYear()} Batch 2026 Production. All Memories Archived.
+          © {new Date().getFullYear()} Developed by Christian.
         </div>
       </footer>
 
