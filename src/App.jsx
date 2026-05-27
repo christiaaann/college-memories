@@ -49,6 +49,10 @@ import jinky from './assets/jinky.jpg'
 import bea from './assets/bea.jpg'
 import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react'
 
+// I-import ang Firestore db instance mula sa ginawa nating firebase.js file
+import { db } from './services/firebase'
+import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverTimestamp } from 'firebase/firestore'
+
 function App() {
   const [activeVideoIndex, setActiveVideoIndex] = useState(null);
   const videoRefs = useRef({});
@@ -79,19 +83,10 @@ function App() {
     { id: 10, name: "Bea Barcelona", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: bea },
   ])
 
-  // --- LOCALSTORAGE MESSAGE LOGIC ---
-  const defaultMessage = {
-    id: 'default',
-    title: "Through the Deadlines and Coffee Runs",
-    body: "We spent years chasing points, debugging broken codes, and sharing snacks in hallways. This platform is our living archive—a space where our best memories won't fade. Let's look back with pride and forward with absolute hope.",
-    author: "Batch 2026 Core"
-  };
-
-  const [messages, setMessages] = useState(() => {
-    const savedMessages = localStorage.getItem('batch2026_messages');
-    return savedMessages ? JSON.parse(savedMessages) : [defaultMessage];
-  });
-
+  // --- FIREBASE FIRESTORE LOGIC ---
+  const [messages, setMessages] = useState([]);
+  
+  // LocalStorage tracking para malaman ng device na ito kung aling documents ang pino-post mo (Para sa delete visibility)
   const [myPostIds, setMyPostIds] = useState(() => {
     const savedIds = localStorage.getItem('my_created_posts');
     return savedIds ? JSON.parse(savedIds) : [];
@@ -104,12 +99,26 @@ function App() {
   });
 
   const [deleteTargetId, setDeleteTargetId] = useState(null);
-  // State para sa napiling message na ipapakita sa pop-up
   const [selectedMessage, setSelectedMessage] = useState(null);
 
+  // Realtime Data Fetch mula sa Firestore
   useEffect(() => {
-    localStorage.setItem('batch2026_messages', JSON.stringify(messages));
-  }, [messages]);
+    const messagesCollection = collection(db, 'messages');
+    // I-sort natin ayon sa pinakabago (createdAt)
+    const q = query(messagesCollection, orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setMessages(fetchedMessages);
+    }, (error) => {
+      console.error("Error fetching messages from firestore: ", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('my_created_posts', JSON.stringify(myPostIds));
@@ -120,35 +129,43 @@ function App() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmitMessage = (e) => {
+  // Pagsusumite ng mensahe papuntang Firestore
+  const handleSubmitMessage = async (e) => {
     e.preventDefault();
     if (!formData.author || !formData.body || !formData.title) return;
 
-    const messageId = Date.now();
+    try {
+      const messagesCollection = collection(db, 'messages');
+      const docRef = await addDoc(messagesCollection, {
+        title: formData.title,
+        body: formData.body,
+        author: formData.author,
+        createdAt: serverTimestamp() // Gumagamit ng server time para sa tumpak na pag-sort
+      });
 
-    const newMessage = {
-      id: messageId, 
-      title: formData.title,
-      body: formData.body,
-      author: formData.author
-    };
-
-    setMessages(prev => [prev[0], newMessage, ...prev.slice(1)]);
-    setMyPostIds(prev => [...prev, messageId]);
-
-    setFormData({ author: '', title: '', body: '' });
+      // Itago ang ID ng dokumento sa local device para pahintulutan ang pagbura
+      setMyPostIds(prev => [...prev, docRef.id]);
+      setFormData({ author: '', title: '', body: '' });
+    } catch (error) {
+      console.error("Error adding document to Firestore: ", error);
+    }
   };
 
   const requestDeleteMessage = (e, id) => {
-    e.stopPropagation(); // Pinipigilan nito na mag-trigger ang pop-up kapag delete button ang pinindot
+    e.stopPropagation();
     setDeleteTargetId(id);
   };
 
-  const confirmDeleteMessage = () => {
+  // Pagbura ng dokumento mula sa Firestore
+  const confirmDeleteMessage = async () => {
     if (deleteTargetId) {
-      setMessages(prev => prev.filter(msg => msg.id !== deleteTargetId));
-      setMyPostIds(prev => prev.filter(id => id !== deleteTargetId));
-      setDeleteTargetId(null);
+      try {
+        await deleteDoc(doc(db, 'messages', deleteTargetId));
+        setMyPostIds(prev => prev.filter(id => id !== deleteTargetId));
+        setDeleteTargetId(null);
+      } catch (error) {
+        console.error("Error deleting document from Firestore: ", error);
+      }
     }
   };
 
@@ -183,7 +200,7 @@ function App() {
     const slowSpeed = 0.25;
 
     const updateMarquee = () => {
-      // Graduates Slider
+      // Graduates Slider (Infinite Loop)
       if (!isPaused.current && trackRef.current) {
         const halfWidth = trackRef.current.scrollWidth / 2;
         setTranslateX((prev) => {
@@ -193,14 +210,16 @@ function App() {
         });
       }
       
-      // Messages Infinite Slider
+      // Messages Slider
       if (!isMsgPaused.current && msgTrackRef.current) {
-        const halfWidthMsg = msgTrackRef.current.scrollWidth / 2;
-        setMsgTranslateX((prev) => {
-          const next = prev - slowSpeed;
-          if (Math.abs(next) >= halfWidthMsg) return 0;
-          return next;
-        });
+        const maxScroll = msgTrackRef.current.scrollWidth - msgTrackRef.current.clientWidth;
+        if (maxScroll > 0) {
+          setMsgTranslateX((prev) => {
+            const next = prev - slowSpeed;
+            if (Math.abs(next) >= maxScroll) return 0; // Balik sa simula kapag umabot sa dulo
+            return next;
+          });
+        }
       }
 
       animationFrameId = requestAnimationFrame(updateMarquee);
@@ -288,7 +307,7 @@ function App() {
         </div>
       )}
 
-      {/* --- NEW FEATURE: MESSAGE VIEW POP-UP MODAL --- */}
+      {/* --- MESSAGE VIEW POP-UP MODAL --- */}
       {selectedMessage !== null && (
         <div 
           className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md transition-all duration-300"
@@ -472,7 +491,7 @@ function App() {
           <div className="w-full h-[1px] bg-[#e8e2d5]" />
         </div>
 
-        {/* --- MESSAGES INFINITE SLIDER WITH POP-UP EVENT --- */}
+        {/* --- MESSAGES SLIDER WITH POP-UP EVENT --- */}
         <div className="relative w-full px-4 select-none mb-14">
           <button onClick={() => handleMsgScrollButton('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300">
             <ChevronLeft size={18} />
@@ -492,48 +511,35 @@ function App() {
                 transition: isMsgPaused.current ? 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)' : 'none' 
               }}
             >
-              {/* Loop 1 */}
-              {messages.map((msg, index) => (
-                <div 
-                  key={`msg1-${msg.id}-${index}`} 
-                  onClick={() => setSelectedMessage(msg)}
-                  className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0"
-                >
-                  {myPostIds.includes(msg.id) && (
-                    <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                  <div>
-                    <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                    <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-4 h-[72px] overflow-hidden">{msg.body}</p>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-[#f4f0e8] text-right">
-                    <span className="font-serif italic text-xs text-[#8c7e6b]">— {msg.author}</span>
-                  </div>
+              {messages.length > 0 ? (
+                <>
+                  {/* Single Loop Setup para walang duplicate sa UI */}
+                  {messages.map((msg, index) => (
+                    <div 
+                      key={`msg-${msg.id}-${index}`} 
+                      onClick={() => setSelectedMessage(msg)}
+                      className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0"
+                    >
+                      {myPostIds.includes(msg.id) && (
+                        <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      <div>
+                        <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
+                        <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-4 h-[72px] overflow-hidden">{msg.body}</p>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-[#f4f0e8] text-right">
+                        <span className="font-serif italic text-xs text-[#8c7e6b]">— {msg.author}</span>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">
+                  Loading shared reflections...
                 </div>
-              ))}
-              {/* Loop 2 */}
-              {messages.map((msg, index) => (
-                <div 
-                  key={`msg2-${msg.id}-${index}`} 
-                  onClick={() => setSelectedMessage(msg)}
-                  className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0"
-                >
-                  {myPostIds.includes(msg.id) && (
-                    <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                  <div>
-                    <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                    <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-4 h-[72px] overflow-hidden">{msg.body}</p>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-[#f4f0e8] text-right">
-                    <span className="font-serif italic text-xs text-[#8c7e6b]">— {msg.author}</span>
-                  </div>
-                </div>
-              ))}
+              )}
             </div>
           </div>
         </div>
@@ -546,17 +552,29 @@ function App() {
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Who are you? (Name)</label>
-              <input type="text" name="author" value={formData.author} onChange={handleInputChange} placeholder="Your name" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
+              <input type="text" name="author" value={formData.author} onChange={handleInputChange} placeholder="e.g., Christian P. Heje" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g. Matalik ko na kaibigan" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c]" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
-              <textarea name="body" value={formData.body} onChange={handleInputChange} placeholder="Write your reflection or memory here..." rows={4} required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none" />
+              <textarea 
+                name="body" 
+                value={formData.body} 
+                onChange={handleInputChange} 
+                rows="4" 
+                placeholder="Write your beautiful memory here..." 
+                required 
+                className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none"
+              />
             </div>
-            <button type="submit" className="w-full bg-[#5c4e3c] text-[#fbfaf7] py-2.5 rounded-lg text-xs font-semibold tracking-widest uppercase hover:bg-[#473b2c] transition-colors">
+            
+            <button 
+              type="submit" 
+              className="w-full bg-[#5c4e3c] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-[#473b2c] shadow-sm transition-colors uppercase tracking-wider mt-2"
+            >
               Post Message
             </button>
           </form>
@@ -564,12 +582,12 @@ function App() {
       </section>
 
       {/* --- FOOTER --- */}
-      <footer className="w-full bg-[#fbfaf7] text-[#474540] py-12 px-6 text-center text-[10px] tracking-wider font-mono">
-        <div>© {new Date().getFullYear()} Developed by Christian.</div>
+      <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
+        © 2026 Myrtle Christian School Inc. • Frontend System Archive
       </footer>
 
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
