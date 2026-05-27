@@ -49,9 +49,8 @@ import jinky from './assets/jinky.jpg'
 import bea from './assets/bea.jpg'
 import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react'
 
-// I-import ang Firestore db instance mula sa ginawa nating firebase.js file
 import { db } from './services/firebase'
-import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverTimestamp } from 'firebase/firestore'
+import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverTimestamp, runTransaction } from 'firebase/firestore'
 
 function App() {
   const [activeVideoIndex, setActiveVideoIndex] = useState(null);
@@ -83,29 +82,40 @@ function App() {
     { id: 10, name: "Bea Barcelona", course: "BS Information Technology", quote: "Keep moving forward, exploring, and learning every day.", image: bea },
   ])
 
+  // --- GLOBAL AUTHOR / INITIAL NAME PROMPT LOGIC ---
+  const [globalAuthor, setGlobalAuthor] = useState(() => {
+    return localStorage.getItem('user_display_name') || '';
+  });
+  const [nameInput, setNameInput] = useState('');
+
+  const handleSaveName = (e) => {
+    e.preventDefault();
+    if (!nameInput.trim()) return;
+    localStorage.setItem('user_display_name', nameInput.trim());
+    setGlobalAuthor(nameInput.trim());
+  };
+
   // --- FIREBASE FIRESTORE LOGIC ---
   const [messages, setMessages] = useState([]);
-  const [isSubmitting, setIsSubmitting] = useState(false); // State para sa Loading Indicator
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // LocalStorage tracking para malaman ng device na ito kung aling documents ang pino-post mo (Para sa delete visibility)
   const [myPostIds, setMyPostIds] = useState(() => {
     const savedIds = localStorage.getItem('my_created_posts');
     return savedIds ? JSON.parse(savedIds) : [];
   });
 
-  const [formData, setFormData] = useState({
-    author: '',
-    title: '',
-    body: ''
+  const [myReactions, setMyReactions] = useState(() => {
+    const savedReactions = localStorage.getItem('my_reactions');
+    return savedReactions ? JSON.parse(savedReactions) : {}; 
   });
 
+  const [formData, setFormData] = useState({ title: '', body: '' });
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
 
   // Realtime Data Fetch mula sa Firestore
   useEffect(() => {
     const messagesCollection = collection(db, 'messages');
-    // I-sort natin ayon sa pinakabago (createdAt)
     const q = query(messagesCollection, orderBy('createdAt', 'desc'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -125,34 +135,123 @@ function App() {
     localStorage.setItem('my_created_posts', JSON.stringify(myPostIds));
   }, [myPostIds]);
 
+  useEffect(() => {
+    localStorage.setItem('my_reactions', JSON.stringify(myReactions));
+  }, [myReactions]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // Pagsusumite ng mensahe papuntang Firestore (May loading state na)
   const handleSubmitMessage = async (e) => {
     e.preventDefault();
-    if (!formData.author || !formData.body || !formData.title || isSubmitting) return;
+    if (!globalAuthor || !formData.body || !formData.title || isSubmitting) return;
 
-    setIsSubmitting(true); // Simulan ang loading animation
+    setIsSubmitting(true);
 
     try {
       const messagesCollection = collection(db, 'messages');
       const docRef = await addDoc(messagesCollection, {
         title: formData.title,
         body: formData.body,
-        author: formData.author,
-        createdAt: serverTimestamp() // Gumagamit ng server time para sa tumpak na pag-sort
+        author: globalAuthor,
+        reactions: { heart: 0, haha: 0 }, 
+        createdAt: serverTimestamp()
       });
 
-      // Itago ang ID ng dokumento sa local device para pahintulutan ang pagbura
       setMyPostIds(prev => [...prev, docRef.id]);
-      setFormData({ author: '', title: '', body: '' });
+      setFormData({ title: '', body: '' });
     } catch (error) {
       console.error("Error adding document to Firestore: ", error);
     } finally {
-      setIsSubmitting(false); // Tapusin ang loading animation kahit magka-error o mag-success
+      setIsSubmitting(false);
+    }
+  };
+
+  // --- SOUPED UP OPTIMISTIC REACTION HANDLER (ULTRA SMOOTH) ---
+  const handleToggleReaction = async (e, messageId, reactionType) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation(); 
+    }
+    
+    const hasReacted = myReactions[messageId]?.[reactionType] || false;
+
+    // 1. INSTANT LOCAL STATE UPDATE (Para sa instant active/inactive color at style transformation)
+    setMyReactions(prev => {
+      const currentMsgReactions = prev[messageId] || { heart: false, haha: false };
+      return {
+        ...prev,
+        [messageId]: { ...currentMsgReactions, [reactionType]: !hasReacted }
+      };
+    });
+
+    // 2. OPTIMISTIC COUNTER UPDATE (Pinapagana agad ang counter sa screen bago pa mag-save sa DB)
+    setMessages(prevMessages => 
+      prevMessages.map(msg => {
+        if (msg.id === messageId) {
+          const currentReactions = msg.reactions || { heart: 0, haha: 0 };
+          const currentCount = currentReactions[reactionType] || 0;
+          return {
+            ...msg,
+            reactions: {
+              ...currentReactions,
+              [reactionType]: hasReacted ? Math.max(0, currentCount - 1) : currentCount + 1
+            }
+          };
+        }
+        return msg;
+      })
+    );
+
+    // 3. SILENT BACKEND TRANSACTION (Tumatakbo sa background nang walang UI lagging)
+    try {
+      const messageDocRef = doc(db, 'messages', messageId);
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(messageDocRef);
+        if (!sfDoc.exists()) return;
+
+        const data = sfDoc.data();
+        const currentReactions = data.reactions || { heart: 0, haha: 0 };
+        const currentCount = currentReactions[reactionType] || 0;
+        let newCount = hasReacted ? Math.max(0, currentCount - 1) : currentCount + 1;
+
+        transaction.update(messageDocRef, {
+          reactions: {
+            ...currentReactions,
+            [reactionType]: newCount
+          }
+        });
+      });
+    } catch (error) {
+      console.error("Failed to update reaction counter: ", error);
+      
+      // Automatic Revert kapag nagkaproblema ang network para tama pa rin ang data
+      setMyReactions(prev => {
+        const currentMsgReactions = prev[messageId] || { heart: false, haha: false };
+        return {
+          ...prev,
+          [messageId]: { ...currentMsgReactions, [reactionType]: hasReacted }
+        };
+      });
+
+      setMessages(prevMessages => 
+        prevMessages.map(msg => {
+          if (msg.id === messageId) {
+            const currentReactions = msg.reactions || { heart: 0, haha: 0 };
+            const currentCount = currentReactions[reactionType] || 0;
+            return {
+              ...msg,
+              reactions: {
+                ...currentReactions,
+                [reactionType]: hasReacted ? currentCount + 1 : Math.max(0, currentCount - 1)
+              }
+            };
+          }
+          return msg;
+        })
+      );
     }
   };
 
@@ -161,7 +260,6 @@ function App() {
     setDeleteTargetId(id);
   };
 
-  // Pagbura ng dokumento mula sa Firestore
   const confirmDeleteMessage = async () => {
     if (deleteTargetId) {
       try {
@@ -190,7 +288,6 @@ function App() {
 
   const collageVideos = [video1, video2, video3, video4, video5]
 
-  // --- MARQUEE SLIDER SPEED AT 0.25 ---
   const [translateX, setTranslateX] = useState(0);
   const [msgTranslateX, setMsgTranslateX] = useState(0);
   
@@ -205,7 +302,6 @@ function App() {
     const slowSpeed = 0.25;
 
     const updateMarquee = () => {
-      // Graduates Slider (Infinite Loop)
       if (!isPaused.current && trackRef.current) {
         const halfWidth = trackRef.current.scrollWidth / 2;
         setTranslateX((prev) => {
@@ -215,13 +311,12 @@ function App() {
         });
       }
       
-      // Messages Slider
       if (!isMsgPaused.current && msgTrackRef.current) {
         const maxScroll = msgTrackRef.current.scrollWidth - msgTrackRef.current.clientWidth;
         if (maxScroll > 0) {
           setMsgTranslateX((prev) => {
             const next = prev - slowSpeed;
-            if (Math.abs(next) >= maxScroll) return 0; // Balik sa simula kapag umabot sa dulo
+            if (Math.abs(next) >= maxScroll) return 0;
             return next;
           });
         }
@@ -256,57 +351,45 @@ function App() {
     setTimeout(() => { isMsgPaused.current = false; }, 3000);
   };
 
+  // Kinukuha ang current memory item data para laging responsive at sync ang open view profile modal
+  const activeSelectedMessageData = selectedMessage ? messages.find(m => m.id === selectedMessage.id) : null;
+
   return (
     <div className="min-h-screen bg-[#fbfaf7] text-[#191919] font-sans antialiased selection:bg-[#f1ece4] overflow-x-hidden">
       
       <style>{`
-        @keyframes marqueeLeft {
-          0% { transform: translateX(0%); }
-          100% { transform: translateX(-50%); }
-        }
-        @keyframes marqueeRight {
-          0% { transform: translateX(-50%); }
-          100% { transform: translateX(0%); }
-        }
-        .animate-marquee-left {
-          display: flex;
-          width: max-content;
-          animation: marqueeLeft 140s linear infinite;
-        }
-        .animate-marquee-right {
-          display: flex;
-          width: max-content;
-          animation: marqueeRight 140s linear infinite;
-        }
-        .animate-marquee-left:hover, .animate-marquee-right:hover {
-          animation-play-state: paused;
-        }
+        @keyframes marqueeLeft { 0% { transform: translateX(0%); } 100% { transform: translateX(-50%); } }
+        @keyframes marqueeRight { 0% { transform: translateX(-50%); } 100% { transform: translateX(0%); } }
+        .animate-marquee-left { display: flex; width: max-content; animation: marqueeLeft 140s linear infinite; }
+        .animate-marquee-right { display: flex; width: max-content; animation: marqueeRight 140s linear infinite; }
+        .animate-marquee-left:hover, .animate-marquee-right:hover { animation-play-state: paused; }
       `}</style>
+
+      {/* --- INITIAL NAME POP-UP MODAL --- */}
+      {!globalAuthor && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#fbfaf7]/80 backdrop-blur-xl">
+          <div className="bg-white max-w-md w-full rounded-3xl p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(40,35,30,0.12)] text-center">
+            <span className="text-4xl block mb-4">✨</span>
+            <h3 className="font-serif text-2xl font-normal text-[#1a1a1a] mb-2">Welcome, Graduate!</h3>
+            <p className="text-xs text-[#66635e] leading-relaxed mb-6">Please enter your name to unlock the Batch 2026 gallery and memory archive system.</p>
+            <form onSubmit={handleSaveName} className="space-y-4">
+              <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Enter your full name..." required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#5c4e3c] text-center font-medium" />
+              <button type="submit" className="w-full bg-[#5c4e3c] text-white py-3 rounded-xl text-xs font-semibold hover:bg-[#473b2c] shadow-sm uppercase tracking-wider transition-colors">Explore Archive</button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* --- DELETE CONFIRMATION MODAL --- */}
       {deleteTargetId !== null && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-fade-in transition-all duration-300">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md">
           <div className="bg-white max-w-sm w-full rounded-2xl p-6 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-4 border border-red-100">
-              <AlertTriangle size={24} />
-            </div>
+            <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-4 border border-red-100"><AlertTriangle size={24} /></div>
             <h3 className="font-serif text-xl font-normal text-[#1a1a1a] mb-2">Delete Message?</h3>
-            <p className="text-xs text-[#66635e] leading-relaxed mb-6">
-              Are you sure you want to permanently remove this reflection? This action cannot be undone.
-            </p>
+            <p className="text-xs text-[#66635e] leading-relaxed mb-6">Are you sure you want to permanently remove this reflection? This action cannot be undone.</p>
             <div className="flex gap-3 w-full">
-              <button 
-                onClick={() => setDeleteTargetId(null)}
-                className="flex-1 bg-gray-50 text-gray-700 py-2.5 rounded-xl text-xs font-semibold hover:bg-gray-100 border border-gray-200/60 transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmDeleteMessage}
-                className="flex-1 bg-red-500 text-white py-2.5 rounded-xl text-xs font-semibold hover:bg-red-600 shadow-sm transition-colors"
-              >
-                Delete Post
-              </button>
+              <button onClick={() => setDeleteTargetId(null)} className="flex-1 bg-gray-50 text-gray-700 py-2.5 rounded-xl text-xs font-semibold hover:bg-gray-100 border border-gray-200/60 transition-colors">Cancel</button>
+              <button onClick={confirmDeleteMessage} className="flex-1 bg-red-500 text-white py-2.5 rounded-xl text-xs font-semibold hover:bg-red-600 shadow-sm transition-colors">Delete Post</button>
             </div>
           </div>
         </div>
@@ -314,32 +397,34 @@ function App() {
 
       {/* --- MESSAGE VIEW POP-UP MODAL --- */}
       {selectedMessage !== null && (
-        <div 
-          className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md transition-all duration-300"
-          onClick={() => setSelectedMessage(null)}
-        >
-          <div 
-            className="bg-[#fdfdfc] max-w-lg w-full rounded-2xl p-6 md:p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.16)] relative animate-fade-in transition-transform"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button 
-              onClick={() => setSelectedMessage(null)}
-              className="absolute top-5 right-5 text-[#8c7e6b] hover:text-[#1a1a1a] p-1.5 rounded-full hover:bg-[#f4f0e8] transition-colors"
-            >
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md" onClick={() => setSelectedMessage(null)}>
+          <div className="bg-[#fdfdfc] max-w-lg w-full rounded-2xl p-6 md:p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.16)] relative animate-fade-in animate-duration-200" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSelectedMessage(null)} className="absolute top-5 right-5 text-[#8c7e6b] hover:text-[#1a1a1a] p-1.5 rounded-full hover:bg-[#f4f0e8] transition-all duration-200">
               <X size={18} />
             </button>
-            
             <div className="mt-2">
-              <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mb-4 pr-6 leading-tight">
-                {selectedMessage.title}
-              </h3>
+              <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mb-4 pr-6 leading-tight">{selectedMessage.title}</h3>
               <div className="w-10 h-[2px] bg-[#5c4e3c] mb-5" />
-              <p className="text-[#3b3935] text-sm md:text-base leading-relaxed font-light text-justify max-h-[60vh] overflow-y-auto pr-2 whitespace-pre-wrap">
-                {selectedMessage.body}
-              </p>
+              <p className="text-[#3b3935] text-sm md:text-base leading-relaxed font-light text-justify max-h-[50vh] overflow-y-auto pr-2 whitespace-pre-wrap">{selectedMessage.body}</p>
             </div>
-            
-            <div className="mt-8 pt-4 border-t border-[#f4f0e8] text-right">
+
+            {/* --- REACTION BUTTONS INSIDE MODAL (ULTRA SMOOTH OPTIMISTIC UI) --- */}
+            <div className="mt-8 flex gap-2.5 items-center">
+              <button 
+                onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'heart')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
+              >
+                <span>❤️</span> <span>{activeSelectedMessageData?.reactions?.heart || 0}</span>
+              </button>
+              <button 
+                onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'haha')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
+              >
+                <span>😂</span> <span>{activeSelectedMessageData?.reactions?.haha || 0}</span>
+              </button>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-[#f4f0e8] text-right">
               <span className="font-serif italic text-sm text-[#8c7e6b]">— {selectedMessage.author}</span>
             </div>
           </div>
@@ -350,13 +435,14 @@ function App() {
       <header className="max-w-5xl mx-auto text-center pt-28 md:pt-36 pb-16 md:pb-20 px-6">
         <div className="flex flex-col relative items-center justify-center gap-2 mb-4">
           <div className="text-5xl absolute -top-8 md:text-7xl duration-1000">🎓</div>
-          <h1 className="font-serif text-5xl md:text-8xl font-normal tracking-tight text-[#1a1a1a] leading-none">
-            Batch 2026
-          </h1>
+          <h1 className="font-serif text-5xl md:text-8xl font-normal tracking-tight text-[#1a1a1a] leading-none">Batch 2026</h1>
         </div>
-        <p className="text-[#66635e] font-serif italic text-lg md:text-2xl max-w-2xl mx-auto font-light leading-relaxed">
-          A widescreen, living archive of our shared, unforgettable journey.
-        </p>
+        <p className="text-[#66635e] font-serif italic text-lg md:text-2xl max-w-2xl mx-auto font-light leading-relaxed">A widescreen, living archive of our shared, unforgettable journey.</p>
+        {globalAuthor && (
+          <div className="mt-4 text-xs font-mono text-[#8c7e6b] uppercase tracking-wider">
+            Logged in as: <span className="font-semibold text-[#5c4e3c] normal-case font-sans">{globalAuthor}</span>
+          </div>
+        )}
       </header>
 
       {/* --- OFFICIAL VIDEO SECTION --- */}
@@ -368,7 +454,6 @@ function App() {
             ))}
           </div>
         </div>
-
         <div className="max-w-5xl mx-auto px-4 md:px-6 relative z-10">
           <div className="relative min-h-[340px] md:aspect-video w-full rounded-2xl md:rounded-3xl bg-[#fdfdfc]/90 backdrop-blur-xl border border-[#decbba] shadow-[0_24px_48px_-12px_rgba(40,35,30,0.06)] flex items-center justify-center overflow-hidden group hover:border-[#bfae99] transition-all duration-500">
             <div className="text-center p-6 py-12 md:py-16 px-4 md:px-16 flex flex-col items-center w-full relative z-10">
@@ -381,18 +466,13 @@ function App() {
               </div>
               <div className="mb-6 relative flex items-center justify-center">
                 <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-[#5c4e3c] text-[#fbfaf7] flex items-center justify-center shadow-lg border border-[#fbfaf7]/10 group-hover:scale-110 group-hover:bg-[#473b2c] transition-all duration-300 cursor-pointer">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" className="w-6 h-6 md:w-8 md:h-8 ml-1 text-[#fbfaf7]">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" className="w-6 h-6 md:w-8 md:h-8 ml-1 text-[#fbfaf7]"><path d="M8 5v14l11-7z" /></svg>
                 </div>
               </div>
               <h3 className="font-serif text-2xl md:text-4xl font-normal mb-4 text-[#1a1a1a] tracking-tight">Film by Christian</h3>
-              <p className="text-[#524f4a] text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light text-center px-2 mb-6">
-                I am currently fine tuning and editing this video compilation for all of us. It will bring together our untold stories, inside jokes, and unforgettable milestones spanning from <span className="font-semibold text-[#5c4e3c]">1st Year to 4th Year</span>. Stay tuned!
-              </p>
+              <p className="text-[#524f4a] text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light text-center px-2 mb-6">I am currently fine tuning and editing this video compilation for all of us. It will bring together our untold stories, inside jokes, and unforgettable milestones spanning from <span className="font-semibold text-[#5c4e3c]">1st Year to 4th Year</span>. Stay tuned!</p>
               <div className="text-[10px] md:text-xs tracking-widest uppercase font-mono text-[#787266] max-w-2xl border-t border-[#decbba]/60 pt-4 mt-2">
-                <span className="text-[#3b352b] font-serif tracking-normal normal-case italic mr-1">Featuring:</span>
-                Christian • Nico • Jane • Patricia • Zara • Lyn • Analeth • Elmina • Bea • Jinky • Faith • Bealyn
+                <span className="text-[#3b352b] font-serif tracking-normal normal-case italic mr-1">Featuring:</span>Christian • Nico • Jane • Patricia • Zara • Lyn • Analeth • Elmina • Bea • Jinky • Faith • Bealyn
               </div>
             </div>
           </div>
@@ -407,33 +487,15 @@ function App() {
             <div className="w-full h-[1px] bg-[#e8e2d5]" />
           </div>
         </div>
-
         <div className="relative w-full px-4 md:px-12 select-none">
-          <button onClick={() => handleScrollButton('left')} className="absolute left-6 md:left-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300 transform scale-90 md:scale-100">
-            <ChevronLeft size={20} />
-          </button>
-          <button onClick={() => handleScrollButton('right')} className="absolute right-6 md:right-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300 transform scale-90 md:scale-100">
-            <ChevronRight size={20} />
-          </button>
-
+          <button onClick={() => handleScrollButton('left')} className="absolute left-6 md:left-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={20} /></button>
+          <button onClick={() => handleScrollButton('right')} className="absolute right-6 md:right-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={20} /></button>
           <div className="w-full overflow-hidden py-4 px-2">
-            <div 
-              ref={trackRef}
-              onMouseEnter={() => { isPaused.current = true }}
-              onMouseLeave={() => { isPaused.current = false }}
-              className="flex gap-5 md:gap-8 will-change-transform"
-              style={{ 
-                transform: `translateX(${translateX}px)`,
-                transition: isPaused.current ? 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)' : 'none' 
-              }}
-            >
-              {/* Loop 1 */}
+            <div ref={trackRef} onMouseEnter={() => { isPaused.current = true }} onMouseLeave={() => { isPaused.current = false }} className="flex gap-5 md:gap-8 will-change-transform" style={{ transform: `translateX(${translateX}px)`, transition: isPaused.current ? 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)' : 'none' }}>
               {graduates.map((grad) => (
-                <div key={`set1-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] shadow-[0_12px_32px_rgba(40,35,30,0.03)] hover:shadow-[0_30px_70px_rgba(25,25,25,0.15)] hover:border-[#bfae99] hover:-translate-y-2 transition-all duration-500 flex-shrink-0 bg-[#f5f1e9] group">
-                  <div className="absolute inset-0 w-full h-full">
-                    <img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110 group-hover:saturate-120" draggable="false" />
-                  </div>
-                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end transition-all duration-500 group-hover:bg-black/50">
+                <div key={`set1-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] group">
+                  <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110" draggable="false" /></div>
+                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
                     <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
                     <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
                     <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5 transition-all duration-500 ease-out group-hover:w-16" />
@@ -441,13 +503,10 @@ function App() {
                   </div>
                 </div>
               ))}
-              {/* Loop 2 */}
               {graduates.map((grad) => (
-                <div key={`set2-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] shadow-[0_12px_32px_rgba(40,35,30,0.03)] hover:shadow-[0_30px_70px_rgba(25,25,25,0.15)] hover:border-[#bfae99] hover:-translate-y-2 transition-all duration-500 flex-shrink-0 bg-[#f5f1e9] group">
-                  <div className="absolute inset-0 w-full h-full">
-                    <img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110 group-hover:saturate-120" draggable="false" />
-                  </div>
-                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end transition-all duration-500 group-hover:bg-black/50">
+                <div key={`set2-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] group">
+                  <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110" draggable="false" /></div>
+                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
                     <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
                     <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
                     <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5 transition-all duration-500 ease-out group-hover:w-16" />
@@ -498,12 +557,8 @@ function App() {
 
         {/* --- MESSAGES SLIDER --- */}
         <div className="relative w-full px-4 select-none mb-14">
-          <button onClick={() => handleMsgScrollButton('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300">
-            <ChevronLeft size={18} />
-          </button>
-          <button onClick={() => handleMsgScrollButton('right')} className="absolute right-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300">
-            <ChevronRight size={18} />
-          </button>
+          <button onClick={() => handleMsgScrollButton('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={18} /></button>
+          <button onClick={() => handleMsgScrollButton('right')} className="absolute right-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={18} /></button>
 
           <div className="w-full overflow-hidden py-4">
             <div 
@@ -531,75 +586,71 @@ function App() {
                       )}
                       <div>
                         <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                        <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-4 h-[72px] overflow-hidden">{msg.body}</p>
+                        <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
                       </div>
-                      <div className="mt-4 pt-3 border-t border-[#f4f0e8] text-right">
-                        <span className="font-serif italic text-xs text-[#8c7e6b]">— {msg.author}</span>
+                      
+                      {/* --- CARD REACTION BUTTONS (ULTRA SMOOTH OPTIMISTIC UI) --- */}
+                      <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
+                        <div className="flex gap-2 relative z-20">
+                          <button 
+                            onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                          >
+                            <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                          </button>
+                          
+                          <button 
+                            onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                          >
+                            <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
+                          </button>
+                        </div>
+                        
+                        <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[120px]">
+                          — {msg.author}
+                        </span>
                       </div>
                     </div>
                   ))}
                 </>
               ) : (
-                <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">
-                  Loading shared reflections...
-                </div>
+                <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">Loading shared reflections...</div>
               )}
             </div>
           </div>
         </div>
 
-        {/* --- FORM SUBMISSION BOX (WITH LOADING SAVING EFFECT) --- */}
+        {/* --- FORM SUBMISSION BOX --- */}
         <div className="max-w-xl mx-auto bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)]">
           <h3 className="font-serif text-xl font-normal text-[#1a1a1a] mb-2">Leave a Message</h3>
-          <p className="text-xs text-[#787266] mb-6 leading-relaxed">Share your favorite memories or wishes directly to the infinite slider grid board.</p>
+          <p className="text-xs text-[#787266] mb-6 leading-relaxed">Posting as <span className="font-semibold text-[#5c4e3c] font-sans">{globalAuthor}</span>. Share your favorite memories directly to the infinite slider board.</p>
           
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Who are you? (Name)</label>
-              <input type="text" name="author" value={formData.author} onChange={handleInputChange} placeholder="Your name" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60 disabled:cursor-not-allowed" />
-            </div>
-            <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g To my Friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60 disabled:cursor-not-allowed" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
-              <textarea 
-                name="body" 
-                value={formData.body} 
-                onChange={handleInputChange} 
-                rows="4" 
-                placeholder="Write your beautiful memory here..." 
-                required 
-                disabled={isSubmitting}
-                className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none disabled:opacity-60 disabled:cursor-not-allowed"
-              />
+              <textarea name="body" value={formData.body} onChange={handleInputChange} rows="4" placeholder="Write your beautiful memory here..." required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] resize-none disabled:opacity-60" />
             </div>
             
-            <button 
-              type="submit" 
-              disabled={isSubmitting}
-              className="w-full bg-[#5c4e3c] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-[#473b2c] shadow-sm transition-all uppercase tracking-wider mt-2 flex items-center justify-center gap-2 disabled:bg-[#8c7e6b] disabled:cursor-not-allowed"
-            >
+            <button type="submit" disabled={isSubmitting} className="w-full bg-[#5c4e3c] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-[#473b2c] shadow-sm transition-all uppercase tracking-wider mt-2 flex items-center justify-center gap-2 disabled:bg-[#8c7e6b]">
               {isSubmitting ? (
                 <>
-                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span>Sending</span>
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <span>Posting Reflection...</span>
                 </>
-              ) : (
-                <span>Post Message</span>
-              )}
+              ) : (<span>Post Message</span>)}
             </button>
           </form>
         </div>
       </section>
 
       {/* --- FOOTER --- */}
-      <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider font-mono">
-        © 2026 Developed by christian.
+      <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
+        © 2026 Myrtle Christian School Inc. • Frontend System Archive
       </footer>
 
     </div>
