@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import image1 from './assets/image1.jpg'
 import image2 from './assets/image2.jpg'
 import image3 from './assets/image3.jpg'
@@ -20,8 +20,8 @@ import image18 from './assets/image18.jpg'
 import image19 from './assets/image19.jpg'
 import image20 from './assets/image20.jpg'
 import image21 from './assets/image21.jpg'
-import image22  from './assets/image22.jpg'
-import image23 from './assets/image23.jpg'
+import image22 from './assets/image22.jpg'
+import image23 from './assets/image24.jpg'
 import image24 from './assets/image24.jpg'
 import image25 from './assets/image25.jpg'
 import image26 from './assets/image26.jpg'
@@ -47,7 +47,7 @@ import analeth from './assets/analeth.jpg'
 import elimina from './assets/elimina.jpg'
 import jinky from './assets/jinky.jpg'
 import bea from './assets/bea.jpg'
-import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X, MessageSquare, Send, Edit3, Check } from 'lucide-react'
+import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X, MessageSquare, Send, Edit3, Check, Grid, Search, ChevronDown, ChevronUp } from 'lucide-react'
 
 import { db } from './services/firebase'
 import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverTimestamp, runTransaction } from 'firebase/firestore'
@@ -55,6 +55,11 @@ import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverT
 function App() {
   const [activeVideoIndex, setActiveVideoIndex] = useState(null);
   const videoRefs = useRef({});
+  const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Hawak nito ang ID ng message na kasalukuyang naka-expand ang comment section
+  const [expandedMessageId, setExpandedMessageId] = useState(null);
 
   const toggleMute = (index) => {
     setActiveVideoIndex((prevIndex) => {
@@ -116,7 +121,6 @@ function App() {
 
   const [formData, setFormData] = useState({ title: '', body: '' });
   const [deleteTargetId, setDeleteTargetId] = useState(null);
-  const [selectedMessage, setSelectedMessage] = useState(null);
 
   // Realtime Data Fetch mula sa Firestore
   useEffect(() => {
@@ -303,13 +307,12 @@ function App() {
     }
   };
 
-  // --- START EDIT COMMENT CONFIG ---
   const startEditingComment = (index, currentText) => {
     setEditingCommentIndex(index);
     setEditingCommentText(currentText);
   };
 
-  // --- SAVE EDITED COMMENT (REMOVED SIGNATURE EDITED FLAG PER INSTRUCTION) ---
+  // --- SAVE EDITED COMMENT ---
   const handleSaveEditedComment = async (messageId, commentIndex) => {
     if (!editingCommentText.trim()) return;
 
@@ -363,11 +366,17 @@ function App() {
       try {
         await deleteDoc(doc(db, 'messages', deleteTargetId));
         setMyPostIds(prev => prev.filter(id => id !== deleteTargetId));
+        if (expandedMessageId === deleteTargetId) setExpandedMessageId(null);
         setDeleteTargetId(null);
       } catch (error) {
         console.error("Error deleting document from Firestore: ", error);
       }
     }
+  };
+
+  const toggleCommentsInline = (e, msgId) => {
+    e.stopPropagation();
+    setExpandedMessageId(prev => prev === msgId ? null : msgId);
   };
 
   const marqueeImages = [
@@ -386,42 +395,102 @@ function App() {
 
   const collageVideos = [video1, video2, video3, video4, video5]
 
-  // --- DYNAMIC PAUSABLE MARQUEE WITH MANUAL GESTURE TRACKING ---
-  const useHybridSlider = () => {
+  // --- FILTERED MESSAGES FOR SEARCH ---
+  const filteredMessages = useMemo(() => {
+    if (!searchQuery.trim()) return messages;
+    return messages.filter(msg => 
+      msg.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      msg.body.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      msg.author.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [messages, searchQuery]);
+
+  // --- HIGH PERFORMANCE FLUID SMOOTH DRAG SYSTEM (WITH MOMENTUM INERTIA) ---
+  const useFluidSlider = () => {
     const trackRef = useRef(null);
-    const [isDragging, setIsDragging] = useState(false);
+    const isDragging = useRef(false);
     const startX = useRef(0);
-    const scrollLeft = useRef(0);
+    const scrollLeftStart = useRef(0);
+    const velocity = useRef(0);
+    const lastX = useRef(0);
+    const lastTime = useRef(0);
+    const animationFrameId = useRef(null);
+    const [activeDragState, setActiveDragState] = useState(false);
+
+    const applyInertia = () => {
+      if (!trackRef.current) return;
+      trackRef.current.scrollLeft -= velocity.current;
+      velocity.current *= 0.92; // Friction damping factor
+      
+      if (Math.abs(velocity.current) > 0.3) {
+        animationFrameId.current = requestAnimationFrame(applyInertia);
+      } else {
+        velocity.current = 0;
+      }
+    };
 
     const onMouseDown = (e) => {
-      setIsDragging(true);
+      // Kung button o comment box ang clinick, huwag i-trigger ang drag handler ng slider
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area')) return;
+      isDragging.current = true;
+      setActiveDragState(true);
+      cancelAnimationFrame(animationFrameId.current);
       startX.current = e.pageX - trackRef.current.offsetLeft;
-      scrollLeft.current = trackRef.current.scrollLeft;
+      scrollLeftStart.current = trackRef.current.scrollLeft;
+      lastX.current = e.pageX;
+      lastTime.current = performance.now();
+      velocity.current = 0;
     };
 
     const onMouseMove = (e) => {
-      if (!startX.current || !isDragging) return;
+      if (!isDragging.current) return;
       e.preventDefault();
+      
       const x = e.pageX - trackRef.current.offsetLeft;
-      const walk = (x - startX.current) * 1.5; 
-      trackRef.current.scrollLeft = scrollLeft.current - walk;
+      const walk = (x - startX.current) * 1.2; 
+      trackRef.current.scrollLeft = scrollLeftStart.current - walk;
+
+      const now = performance.now();
+      const timeElapsed = now - lastTime.current;
+      if (timeElapsed > 0) {
+        velocity.current = (e.pageX - lastX.current) / (timeElapsed / 15);
+      }
+      lastX.current = e.pageX;
+      lastTime.current = now;
     };
 
     const stopDragging = () => {
-      setIsDragging(false);
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      setActiveDragState(false);
+      applyInertia();
     };
 
     const onTouchStart = (e) => {
-      setIsDragging(true);
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area')) return;
+      isDragging.current = true;
+      setActiveDragState(true);
+      cancelAnimationFrame(animationFrameId.current);
       startX.current = e.touches[0].pageX - trackRef.current.offsetLeft;
-      scrollLeft.current = trackRef.current.scrollLeft;
+      scrollLeftStart.current = trackRef.current.scrollLeft;
+      lastX.current = e.touches[0].pageX;
+      lastTime.current = performance.now();
+      velocity.current = 0;
     };
 
     const onTouchMove = (e) => {
-      if (!isDragging) return;
+      if (!isDragging.current) return;
       const x = e.touches[0].pageX - trackRef.current.offsetLeft;
-      const walk = (x - startX.current) * 1.5;
-      trackRef.current.scrollLeft = scrollLeft.current - walk;
+      const walk = (x - startX.current) * 1.2;
+      trackRef.current.scrollLeft = scrollLeftStart.current - walk;
+
+      const now = performance.now();
+      const timeElapsed = now - lastTime.current;
+      if (timeElapsed > 0) {
+        velocity.current = (e.touches[0].pageX - lastX.current) / (timeElapsed / 15);
+      }
+      lastX.current = e.touches[0].pageX;
+      lastTime.current = now;
     };
 
     return {
@@ -433,24 +502,24 @@ function App() {
       onTouchStart,
       onTouchMove,
       onTouchEnd: stopDragging,
-      // Kung naka drag, hihinto ang CSS transformation marquee loop
-      className: `flex gap-5 md:gap-8 overflow-x-auto select-none no-scrollbar cursor-grab active:cursor-grabbing ${isDragging ? 'pause-marquee' : ''}`
+      className: `flex gap-5 md:gap-8 overflow-x-auto select-none no-scrollbar cursor-grab active:cursor-grabbing snap-none scroll-smooth ${activeDragState ? 'dragging-active' : ''}`
     };
   };
 
-  const graduatesSlider = useHybridSlider();
-  const photoSlider = useHybridSlider();
-  const videoSlider = useHybridSlider();
-  const lettersSlider = useHybridSlider();
+  const graduatesSlider = useFluidSlider();
+  const photoSlider = useFluidSlider();
+  const videoSlider = useFluidSlider();
+  const lettersSlider = useFluidSlider();
 
   const handleArrowNav = (sliderRef, direction) => {
     const shift = window.innerWidth < 768 ? 290 : 360;
     if (sliderRef.current) {
-      sliderRef.current.scrollLeft += direction === 'left' ? -shift : shift;
+      sliderRef.current.scrollTo({
+        left: sliderRef.current.scrollLeft + (direction === 'left' ? -shift : shift),
+        behavior: 'smooth'
+      });
     }
   };
-
-  const activeSelectedMessageData = selectedMessage ? messages.find(m => m.id === selectedMessage.id) : null;
 
   return (
     <div className="min-h-screen bg-[#fbfaf7] text-[#191919] font-sans antialiased selection:bg-[#f1ece4] overflow-x-hidden">
@@ -459,7 +528,6 @@ function App() {
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scroll-width: none; }
 
-        /* Smooth Marquee Animations */
         @keyframes customMarquee {
           0% { transform: translateX(0); }
           100% { transform: translateX(-50%); }
@@ -472,13 +540,22 @@ function App() {
         .animate-loop-left { display: flex; width: max-content; animation: customMarquee 120s linear infinite; }
         .animate-loop-right { display: flex; width: max-content; animation: customMarqueeReverse 120s linear infinite; }
         
-        /* Instant Pause rules kapag hinawakan o hinover */
-        .pause-marquee .animate-loop-left,
-        .pause-marquee .animate-loop-right,
+        .dragging-active .animate-loop-left,
+        .dragging-active .animate-loop-right,
         .animate-loop-left:hover,
         .animate-loop-right:hover {
           animation-play-state: paused !important;
         }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { bg: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #decbba; border-radius: 20px; }
+
+        @keyframes slideDownInline {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slideDownInline { animation: slideDownInline 0.25s ease-out forwards; }
       `}</style>
 
       {/* --- INITIAL NAME POP-UP MODAL --- */}
@@ -511,131 +588,137 @@ function App() {
         </div>
       )}
 
-      {/* --- MESSAGE & COMMENTS POP-UP MODAL --- */}
-      {selectedMessage !== null && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md" onClick={() => { setSelectedMessage(null); setEditingCommentIndex(null); }}>
-          <div className="bg-[#fdfdfc] max-w-xl w-full rounded-2xl p-6 md:p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.16)] relative flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => { setSelectedMessage(null); setEditingCommentIndex(null); }} className="absolute top-5 right-5 text-[#8c7e6b] hover:text-[#1a1a1a] p-1.5 rounded-full hover:bg-[#f4f0e8] transition-all duration-200">
+      {/* --- SIDEBAR PANEL: VIEW ALL REFLECTIONS --- */}
+      <div className={`fixed inset-0 z-[110] transition-all duration-500 ease-in-out ${isViewAllOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+        <div 
+          onClick={() => setIsViewAllOpen(false)}
+          className={`absolute inset-0 transition-opacity duration-500 ${isViewAllOpen ? 'opacity-100' : 'opacity-0'}`} 
+        />
+        <div className={`absolute right-0 top-0 h-full w-full max-w-md bg-[#fdfdfc] border-l border-[#decbba] shadow-[-16px_0_48px_rgba(40,35,30,0.1)] flex flex-col transition-transform duration-500 ease-out ${isViewAllOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className="p-5 border-b border-[#f4f0e8] flex items-center justify-between">
+            <div>
+              <h3 className="font-serif text-lg font-normal text-[#1a1a1a]">All Reflections Archive</h3>
+              <p className="text-[11px] text-[#8c7e6b] font-mono uppercase tracking-wider mt-0.5">{messages.length} Shared Messages</p>
+            </div>
+            <button onClick={() => setIsViewAllOpen(false)} className="text-[#8c7e6b] hover:text-[#1a1a1a] p-2 rounded-full hover:bg-[#f4f0e8] transition-colors">
               <X size={18} />
             </button>
-            
-            <div className="overflow-y-auto pr-1 flex-1 space-y-5 custom-scrollbar">
-              <div className="mt-2">
-                <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mb-3 pr-6 leading-tight">{selectedMessage.title}</h3>
-                <div className="w-10 h-[2px] bg-[#5c4e3c] mb-4" />
-                <p className="text-[#3b3935] text-sm md:text-base leading-relaxed font-light text-justify whitespace-pre-wrap">{selectedMessage.body}</p>
-                <div className="mt-3 text-right">
-                  <span className="font-serif italic text-sm text-[#8c7e6b]">— {selectedMessage.author}</span>
-                </div>
-              </div>
+          </div>
 
-              {/* Reaction Section */}
-              <div className="flex gap-2.5 items-center pt-3 border-t border-[#f4f0e8]">
-                <button 
-                  onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'heart')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
-                >
-                  <span>❤️</span> <span>{activeSelectedMessageData?.reactions?.heart || 0}</span>
-                </button>
-                <button 
-                  onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'haha')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
-                >
-                  <span>😂</span> <span>{activeSelectedMessageData?.reactions?.haha || 0}</span>
-                </button>
-              </div>
-
-              {/* Comment Section List */}
-              <div className="pt-4 border-t border-[#f4f0e8]">
-                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#787266] mb-3 flex items-center gap-1.5">
-                  <MessageSquare size={13} /> Comments ({activeSelectedMessageData?.comments?.length || 0})
-                </h4>
-                
-                <div className="space-y-2.5 max-h-[240px] overflow-y-auto pr-1">
-                  {activeSelectedMessageData?.comments && activeSelectedMessageData.comments.length > 0 ? (
-                    activeSelectedMessageData.comments.map((cmt, cIdx) => (
-                      <div key={`modal-cmt-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/80 rounded-xl p-3 text-left relative group/cmt">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-semibold text-[#5c4e3c]">{cmt.author}</span>
-                          <span className="text-[9px] font-mono text-[#a39a8c]">
-                            {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
-                          </span>
-                        </div>
-                        
-                        {editingCommentIndex === cIdx ? (
-                          <div className="flex gap-2 mt-2 items-center">
-                            <input 
-                              type="text" 
-                              value={editingCommentText} 
-                              onChange={(e) => setEditingCommentText(e.target.value)} 
-                              maxLength={300}
-                              className="flex-1 bg-white border border-[#decbba] rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#5c4e3c]"
-                            />
-                            <button 
-                              onClick={() => handleSaveEditedComment(selectedMessage.id, cIdx)} 
-                              className="bg-emerald-600 text-white p-1.5 rounded-lg hover:bg-emerald-700 transition-colors"
-                            >
-                              <Check size={12} />
-                            </button>
-                            <button 
-                              onClick={() => setEditingCommentIndex(null)} 
-                              className="bg-gray-100 text-gray-500 p-1.5 rounded-lg hover:bg-gray-200 transition-colors"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <p className="text-[#4a4742] text-xs font-light leading-relaxed whitespace-pre-wrap pr-12">{cmt.text}</p>
-                            
-                            {cmt.author === globalAuthor && (
-                              <div className="absolute right-2.5 bottom-2 flex items-center gap-1 opacity-0 group-hover/cmt:opacity-100 transition-opacity duration-200">
-                                <button 
-                                  onClick={() => startEditingComment(cIdx, cmt.text)}
-                                  className="text-[#8c7e6b] hover:text-[#5c4e3c] p-1 rounded-md hover:bg-[#f4f0e8] transition-colors"
-                                  title="Edit comment"
-                                >
-                                  <Edit3 size={11} />
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteComment(selectedMessage.id, cIdx)}
-                                  className="text-red-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors"
-                                  title="Delete comment"
-                                >
-                                  <Trash2 size={11} />
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-4 bg-[#fbfaf7] rounded-xl border border-dashed border-[#decbba] text-xs font-serif italic text-[#8c7e6b]">
-                      No conversations yet. Be the first to drop a comment!
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <form onSubmit={(e) => handleSubmitComment(e, selectedMessage.id)} className="mt-4 pt-3 border-t border-[#f4f0e8] flex gap-2 items-center">
+          <div className="p-4 bg-[#fbfaf7] border-b border-[#f4f0e8]">
+            <div className="relative">
               <input 
                 type="text" 
-                value={commentInput}
-                onChange={(e) => setCommentInput(e.target.value)}
-                placeholder="Write a supportive reply..." 
-                maxLength={300}
-                required
-                className="flex-1 bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[#5c4e3c]"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search title, context or graduate author..." 
+                className="w-full bg-white border border-[#decbba] rounded-xl pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-[#5c4e3c] placeholder-[#9c968a]"
               />
-              <button type="submit" className="bg-[#5c4e3c] text-white p-2.5 rounded-xl hover:bg-[#473b2c] transition-colors shadow-sm flex items-center justify-center flex-shrink-0">
-                <Send size={14} />
-              </button>
-            </form>
+              <Search size={13} className="absolute left-3 top-3 text-[#8c7e6b]" />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="absolute right-3 top-3 text-xs font-bold text-gray-400 hover:text-gray-600"><X size={13} /></button>
+              )}
+            </div>
+          </div>
+
+          {/* Drawer Message List Section */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-[#fbfaf7]/30">
+            {filteredMessages.length > 0 ? (
+              filteredMessages.map((msg) => {
+                const isCurrentExpanded = expandedMessageId === msg.id;
+                return (
+                  <div 
+                    key={`drawer-msg-${msg.id}`}
+                    onClick={(e) => toggleCommentsInline(e, msg.id)}
+                    className={`bg-white border rounded-xl p-4 shadow-[0_2px_12px_rgba(0,0,0,0.01)] hover:border-[#ccbfad] cursor-pointer transition-all duration-200 relative group ${isCurrentExpanded ? 'border-[#5c4e3c] bg-white ring-1 ring-[#5c4e3c]/20' : 'border-[#e8e2d5]'}`}
+                  >
+                    {myPostIds.includes(msg.id) && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); requestDeleteMessage(e, msg.id); }} 
+                        className="absolute top-4 right-4 text-red-400 hover:text-red-600 p-1 rounded transition-colors bg-red-50/50 md:opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                    <h4 className="font-serif text-sm font-medium text-[#1a1a1a] pr-6 mb-1 line-clamp-2">{msg.title}</h4>
+                    <p className="text-[#66635e] text-[11px] leading-relaxed mb-3 line-clamp-4">{msg.body}</p>
+                    
+                    <div className="flex justify-between items-center text-[10px] pt-2 border-t border-dashed border-[#f4f0e8]">
+                      <div className="flex gap-2 text-gray-500">
+                        <button onClick={(e) => handleToggleReaction(e, msg.id, 'heart')} className={`hover:text-red-500 transition-colors ${myReactions[msg.id]?.heart ? 'font-bold text-red-500' : ''}`}>❤️ {msg.reactions?.heart || 0}</button>
+                        <button onClick={(e) => handleToggleReaction(e, msg.id, 'haha')} className={`hover:text-amber-500 transition-colors ${myReactions[msg.id]?.haha ? 'font-bold text-amber-500' : ''}`}>😂 {msg.reactions?.haha || 0}</button>
+                        <span className="flex items-center gap-0.5 text-[#5c4e3c] font-medium">💬 {msg.comments?.length || 0} {isCurrentExpanded ? <ChevronUp size={10} className="inline ml-0.5" /> : <ChevronDown size={10} className="inline ml-0.5" />}</span>
+                      </div>
+                      <span className="font-serif italic text-[#8c7e6b]">— {msg.author}</span>
+                    </div>
+
+                    {/* --- INLINE EXPANDED COMMENTS SECTION (INSIDE DRAWER) --- */}
+                    {isCurrentExpanded && (
+                      <div className="mt-4 pt-4 border-t border-[#f4f0e8] space-y-3 comment-box-area animate-slideDownInline" onClick={(e) => e.stopPropagation()}>
+                        <h5 className="text-[10px] font-bold uppercase tracking-wider text-[#787266] flex items-center gap-1.5 mb-2">
+                          <MessageSquare size={11} /> Conversation Threads
+                        </h5>
+                        
+                        <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
+                          {msg.comments && msg.comments.length > 0 ? (
+                            msg.comments.map((cmt, cIdx) => (
+                              <div key={`drawer-cmt-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-lg p-2.5 relative group/drawerCmt">
+                                <div className="flex items-center justify-between mb-0.5">
+                                  <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                  <span className="text-[8px] font-mono text-[#a39a8c]">
+                                    {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                  </span>
+                                </div>
+                                {editingCommentIndex === cIdx ? (
+                                  <div className="flex gap-1.5 mt-1 items-center">
+                                    <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                    <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                    <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                    {cmt.author === globalAuthor && (
+                                      <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/drawerCmt:opacity-100 transition-opacity">
+                                        <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                        <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-3 bg-[#fbfaf7] rounded-lg border border-dashed border-[#decbba] text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
+                          )}
+                        </div>
+
+                        {/* Comment form container */}
+                        <form onSubmit={(e) => handleSubmitComment(e, msg.id)} className="flex gap-2 items-center mt-2 pt-2 border-t border-[#f4f0e8]">
+                          <input 
+                            type="text" 
+                            value={commentInput}
+                            onChange={(e) => setCommentInput(e.target.value)}
+                            placeholder="Type a supportive reply..." 
+                            maxLength={300}
+                            required
+                            className="flex-1 bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-1.5 text-[11px] focus:outline-none focus:border-[#5c4e3c]"
+                          />
+                          <button type="submit" className="bg-[#5c4e3c] text-white p-2 rounded-lg hover:bg-[#473b2c] flex-shrink-0"><Send size={11} /></button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-12 text-xs font-serif italic text-[#8c7e6b]">
+                No matching logs found for "{searchQuery}".
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       {/* --- HERO SECTION --- */}
       <header className="max-w-5xl mx-auto text-center pt-28 md:pt-36 pb-16 md:pb-20 px-6">
@@ -683,7 +766,7 @@ function App() {
         </div>
       </section>
 
-      {/* --- GRADUATES SECTION (ANIMATED + DRAGGABLE) --- */}
+      {/* --- GRADUATES SECTION --- */}
       <section className="w-full bg-[#fbfaf7] mb-20 md:mb-28 relative overflow-hidden">
         <div className="max-w-5xl mx-auto px-6 mb-10 flex items-center justify-between">
           <div className="flex items-center gap-6 w-full">
@@ -699,7 +782,7 @@ function App() {
             <div {...graduatesSlider}>
               <div className="animate-loop-left gap-5 md:gap-8">
                 {graduates.map((grad, i) => (
-                  <div key={`grad-set1-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] pointer-events-none select-none">
+                  <div key={`grad-set1-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9]">
                     <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02]" draggable="false" /></div>
                     <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
                       <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
@@ -709,9 +792,8 @@ function App() {
                     </div>
                   </div>
                 ))}
-                {/* Marquee Infinite Clone */}
                 {graduates.map((grad, i) => (
-                  <div key={`grad-set2-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] pointer-events-none select-none">
+                  <div key={`grad-set2-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9]">
                     <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02]" draggable="false" /></div>
                     <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
                       <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
@@ -727,18 +809,18 @@ function App() {
         </div>
       </section>
 
-      {/* --- PHOTO COLLAGE (ANIMATED + DRAGGABLE) --- */}
+      {/* --- PHOTO COLLAGE --- */}
       <section className="w-full overflow-hidden px-4 md:px-12 mb-4">
         <div {...photoSlider}>
           <div className="animate-loop-right gap-4 md:gap-6">
             {collageImages.map((src, idx) => (
-              <div key={`photo-c1-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 pointer-events-none select-none">
+              <div key={`photo-c1-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
                 <img src={src} alt={`Memory ${idx + 1}`} className="w-full h-64 md:h-80 object-cover rounded-lg mb-3" draggable="false" />
                 <div className="h-1.5 md:h-2 w-12 md:w-16 bg-[#ebdccb]/50 rounded-full mx-auto" />
               </div>
             ))}
             {collageImages.map((src, idx) => (
-              <div key={`photo-c2-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 pointer-events-none select-none">
+              <div key={`photo-c2-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
                 <img src={src} alt={`Memory clone ${idx + 1}`} className="w-full h-64 md:h-80 object-cover rounded-lg mb-3" draggable="false" />
                 <div className="h-1.5 md:h-2 w-12 md:w-16 bg-[#ebdccb]/50 rounded-full mx-auto" />
               </div>
@@ -747,13 +829,13 @@ function App() {
         </div>
       </section>
 
-      {/* --- VIDEO COLLAGE (ANIMATED + DRAGGABLE) --- */}
+      {/* --- VIDEO COLLAGE --- */}
       <section className="w-full bg-[#f4f0e8]/30 pb-12 pt-6 px-4 md:px-12">
         <div {...videoSlider}>
           <div className="animate-loop-left gap-4 md:gap-6">
             {collageVideos.map((src, idx) => (
-              <div key={`video-c1-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 select-none">
-                <video ref={(el) => (videoRefs.current[`v1-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v1-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9] pointer-events-none" />
+              <div key={`video-c1-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
+                <video ref={(el) => (videoRefs.current[`v1-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v1-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9]" />
                 <button onClick={(e) => { e.stopPropagation(); toggleMute(`v1-${idx}`); }} className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center z-10 cursor-pointer">
                   {activeVideoIndex === `v1-${idx}` ? <Volume2 size={16} /> : <VolumeOff size={16} />}
                 </button>
@@ -761,8 +843,8 @@ function App() {
               </div>
             ))}
             {collageVideos.map((src, idx) => (
-              <div key={`video-c2-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 select-none">
-                <video ref={(el) => (videoRefs.current[`v2-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v2-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9] pointer-events-none" />
+              <div key={`video-c2-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
+                <video ref={(el) => (videoRefs.current[`v2-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v2-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9]" />
                 <button onClick={(e) => { e.stopPropagation(); toggleMute(`v2-${idx}`); }} className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center z-10 cursor-pointer">
                   {activeVideoIndex === `v2-${idx}` ? <Volume2 size={16} /> : <VolumeOff size={16} />}
                 </button>
@@ -773,11 +855,20 @@ function App() {
         </div>
       </section>
 
-      {/* --- LETTERS & REFLECTIONS SECTION (ANIMATED + DRAGGABLE) --- */}
+      {/* --- LETTERS & REFLECTIONS SECTION --- */}
       <section className="max-w-5xl mx-auto px-6 mb-24 md:mb-32 mt-16">
-        <div className="flex items-center gap-6 mb-12 md:mb-16">
-          <h2 className="font-serif text-2xl md:text-4xl font-normal tracking-tight text-[#1a1a1a] whitespace-nowrap">Letters & Reflections</h2>
-          <div className="w-full h-[1px] bg-[#e8e2d5]" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-12 md:mb-16">
+          <div className="flex items-center gap-6 flex-1">
+            <h2 className="font-serif text-2xl md:text-4xl font-normal tracking-tight text-[#1a1a1a] whitespace-nowrap">Letters & Reflections</h2>
+            <div className="w-full h-[1px] bg-[#e8e2d5]" />
+          </div>
+          <button 
+            onClick={() => setIsViewAllOpen(true)}
+            className="flex-shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-[#decbba] bg-white text-xs font-semibold text-[#5c4e3c] hover:bg-[#5c4e3c] hover:text-white hover:border-[#5c4e3c] shadow-sm transition-all duration-300"
+          >
+            <Grid size={13} />
+            <span>View All Messages</span>
+          </button>
         </div>
 
         <div className="relative w-full px-4 mb-14">
@@ -786,88 +877,188 @@ function App() {
 
           <div className="w-full py-4">
             <div {...lettersSlider}>
-              <div className="animate-loop-left gap-6 py-2">
+              <div className="animate-loop-left gap-6 py-2 items-start">
                 {messages.length > 0 ? (
                   <>
-                    {messages.map((msg, index) => (
-                      <div 
-                        key={`msg-card-s1-${msg.id}-${index}`} 
-                        onClick={() => setSelectedMessage(msg)}
-                        className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0 select-none"
-                      >
-                        {myPostIds.includes(msg.id) && (
-                          <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                        <div>
-                          <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                          <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
-                        </div>
-                        
-                        <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
-                          <div className="flex gap-1.5 relative z-20">
-                            <button 
-                              onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                            >
-                              <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                    {/* First Loop set */}
+                    {messages.map((msg, index) => {
+                      const isExpanded = expandedMessageId === msg.id;
+                      return (
+                        <div 
+                          key={`msg-card-s1-${msg.id}-${index}`} 
+                          onClick={(e) => toggleCommentsInline(e, msg.id)}
+                          className={`w-[295px] md:w-[390px] bg-[#fdfdfc] border rounded-2xl p-5 md:p-6 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer transition-all duration-300 relative flex-shrink-0 self-start ${isExpanded ? 'border-[#5c4e3c] bg-white ring-1 ring-[#5c4e3c]/10' : 'border-[#e8e2d5]'}`}
+                        >
+                          {myPostIds.includes(msg.id) && (
+                            <button onClick={(e) => { e.stopPropagation(); requestDeleteMessage(e, msg.id); }} className="absolute top-4 right-4 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-1.5 rounded-lg border border-red-100 z-10">
+                              <Trash2 size={13} />
                             </button>
-                            <button 
-                              onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                            >
-                              <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
-                            </button>
-                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-50 border border-gray-200/70 text-[#787266]">
-                              <MessageSquare size={10} className="text-[#8c7e6b]" />
-                              <span>{msg.comments?.length || 0}</span>
-                            </div>
+                          )}
+                          <div>
+                            <h3 className="font-serif text-base md:text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-2 leading-snug">{msg.title}</h3>
+                            <p className={`text-[#524f4a] text-xs leading-relaxed font-light text-justify overflow-hidden mb-4 ${isExpanded ? 'block' : 'line-clamp-4 max-h-[72px]'}`}>{msg.body}</p>
                           </div>
-                          <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[110px]">— {msg.author}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {/* Marquee Infinite Loop Clone for Messages */}
-                    {messages.map((msg, index) => (
-                      <div 
-                        key={`msg-card-s2-${msg.id}-${index}`} 
-                        onClick={() => setSelectedMessage(msg)}
-                        className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0 select-none"
-                      >
-                        {myPostIds.includes(msg.id) && (
-                          <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                        <div>
-                          <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                          <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
-                        </div>
-                        
-                        <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
-                          <div className="flex gap-1.5 relative z-20">
-                            <button 
-                              onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                            >
-                              <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
-                            </button>
-                            <button 
-                              onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                            >
-                              <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
-                            </button>
-                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-50 border border-gray-200/70 text-[#787266]">
-                              <MessageSquare size={10} className="text-[#8c7e6b]" />
-                              <span>{msg.comments?.length || 0}</span>
+                          
+                          <div className="pt-3 border-t border-[#f4f0e8] flex items-center justify-between text-[11px]">
+                            <div className="flex gap-1.5 relative z-20">
+                              <button 
+                                onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all border ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266]'}`}
+                              >
+                                <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                              </button>
+                              <button 
+                                onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all border ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266]'}`}
+                              >
+                                <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
+                              </button>
+                              <button 
+                                onClick={(e) => toggleCommentsInline(e, msg.id)}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-[#5c4e3c] font-medium"
+                              >
+                                <MessageSquare size={10} />
+                                <span>{msg.comments?.length || 0}</span>
+                              </button>
                             </div>
+                            <span className="font-serif italic text-[#8c7e6b] truncate pl-2 max-w-[105px]">— {msg.author}</span>
                           </div>
-                          <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[110px]">— {msg.author}</span>
+
+                          {/* --- INLINE MAIN MESSAGES LIST COMMENTS DROPDOWN --- */}
+                          {isExpanded && (
+                            <div className="mt-4 pt-4 border-t border-[#f4f0e8] space-y-3 comment-box-area animate-slideDownInline text-left" onClick={(e) => e.stopPropagation()}>
+                              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                                {msg.comments && msg.comments.length > 0 ? (
+                                  msg.comments.map((cmt, cIdx) => (
+                                    <div key={`inline-cmt-1-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
+                                      <div className="flex items-center justify-between mb-0.5">
+                                        <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                        <span className="text-[8px] font-mono text-[#a39a8c]">
+                                          {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                        </span>
+                                      </div>
+                                      {editingCommentIndex === cIdx ? (
+                                        <div className="flex gap-1.5 mt-1 items-center">
+                                          <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                          <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                          <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                          {cmt.author === globalAuthor && (
+                                            <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
+                                              <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                              <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-center py-2 text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
+                                )}
+                              </div>
+                              <form onSubmit={(e) => handleSubmitComment(e, msg.id)} className="flex gap-2 items-center pt-2 border-t border-[#f4f0e8]">
+                                <input type="text" value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="Write a reply..." maxLength={300} required className="flex-1 bg-[#fbfaf7] border border-[#decbba] rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:border-[#5c4e3c]" />
+                                <button type="submit" className="bg-[#5c4e3c] text-white p-1.5 rounded-lg hover:bg-[#473b2c]"><Send size={12} /></button>
+                              </form>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+
+                    {/* Infinite clone loop set */}
+                    {messages.map((msg, index) => {
+                      const isExpanded = expandedMessageId === msg.id;
+                      return (
+                        <div 
+                          key={`msg-card-s2-${msg.id}-${index}`} 
+                          onClick={(e) => toggleCommentsInline(e, msg.id)}
+                          className={`w-[295px] md:w-[390px] bg-[#fdfdfc] border rounded-2xl p-5 md:p-6 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer transition-all duration-300 relative flex-shrink-0 self-start ${isExpanded ? 'border-[#5c4e3c] bg-white ring-1 ring-[#5c4e3c]/10' : 'border-[#e8e2d5]'}`}
+                        >
+                          {myPostIds.includes(msg.id) && (
+                            <button onClick={(e) => { e.stopPropagation(); requestDeleteMessage(e, msg.id); }} className="absolute top-4 right-4 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-1.5 rounded-lg border border-red-100 z-10">
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                          <div>
+                            <h3 className="font-serif text-base md:text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-2 leading-snug">{msg.title}</h3>
+                            <p className={`text-[#524f4a] text-xs leading-relaxed font-light text-justify overflow-hidden mb-4 ${isExpanded ? 'block' : 'line-clamp-4 max-h-[72px]'}`}>{msg.body}</p>
+                          </div>
+                          
+                          <div className="pt-3 border-t border-[#f4f0e8] flex items-center justify-between text-[11px]">
+                            <div className="flex gap-1.5 relative z-20">
+                              <button 
+                                onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all border ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266]'}`}
+                              >
+                                <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                              </button>
+                              <button 
+                                onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
+                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full transition-all border ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266]'}`}
+                              >
+                                <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
+                              </button>
+                              <button 
+                                onClick={(e) => toggleCommentsInline(e, msg.id)}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-[#5c4e3c] font-medium"
+                              >
+                                <MessageSquare size={10} />
+                                <span>{msg.comments?.length || 0}</span>
+                              </button>
+                            </div>
+                            <span className="font-serif italic text-[#8c7e6b] truncate pl-2 max-w-[105px]">— {msg.author}</span>
+                          </div>
+
+                          {/* --- INLINE MAIN MESSAGES LIST COMMENTS DROPDOWN (CLONE) --- */}
+                          {isExpanded && (
+                            <div className="mt-4 pt-4 border-t border-[#f4f0e8] space-y-3 comment-box-area animate-slideDownInline text-left" onClick={(e) => e.stopPropagation()}>
+                              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                                {msg.comments && msg.comments.length > 0 ? (
+                                  msg.comments.map((cmt, cIdx) => (
+                                    <div key={`inline-cmt-2-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
+                                      <div className="flex items-center justify-between mb-0.5">
+                                        <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                        <span className="text-[8px] font-mono text-[#a39a8c]">
+                                          {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                        </span>
+                                      </div>
+                                      {editingCommentIndex === cIdx ? (
+                                        <div className="flex gap-1.5 mt-1 items-center">
+                                          <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                          <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                          <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                          {cmt.author === globalAuthor && (
+                                            <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
+                                              <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                              <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-center py-2 text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
+                                )}
+                              </div>
+                              <form onSubmit={(e) => handleSubmitComment(e, msg.id)} className="flex gap-2 items-center pt-2 border-t border-[#f4f0e8]">
+                                <input type="text" value={commentInput} onChange={(e) => setCommentInput(e.target.value)} placeholder="Write a reply..." maxLength={300} required className="flex-1 bg-[#fbfaf7] border border-[#decbba] rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none focus:border-[#5c4e3c]" />
+                                <button type="submit" className="bg-[#5c4e3c] text-white p-1.5 rounded-lg hover:bg-[#473b2c]"><Send size={12} /></button>
+                              </form>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </>
                 ) : (
                   <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">Loading shared reflections...</div>
@@ -885,7 +1076,7 @@ function App() {
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my Friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
@@ -906,7 +1097,7 @@ function App() {
 
       {/* --- FOOTER --- */}
       <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Developed by christian.
+        © 2026 Myrtle Christian School Inc. • Frontend System Archive
       </footer>
 
     </div>
