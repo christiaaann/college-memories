@@ -885,7 +885,7 @@ function App() {
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my Friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
@@ -906,7 +906,7 @@ function App() {
 
       {/* --- FOOTER --- */}
       <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Myrtle Christian School Inc. • Frontend System Archive
+        © 2026 Developed by christian.
       </footer>
 
     </div>
