@@ -20,7 +20,7 @@ import image18 from './assets/image18.jpg'
 import image19 from './assets/image19.jpg'
 import image20 from './assets/image20.jpg'
 import image21 from './assets/image21.jpg'
-import image22 from './assets/image22.jpg'
+import image22  from './assets/image22.jpg'
 import image23 from './assets/image23.jpg'
 import image24 from './assets/image24.jpg'
 import image25 from './assets/image25.jpg'
@@ -47,7 +47,7 @@ import analeth from './assets/analeth.jpg'
 import elimina from './assets/elimina.jpg'
 import jinky from './assets/jinky.jpg'
 import bea from './assets/bea.jpg'
-import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react'
+import { Volume2, VolumeOff, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X, MessageSquare, Send, Edit3, Check } from 'lucide-react'
 
 import { db } from './services/firebase'
 import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, serverTimestamp, runTransaction } from 'firebase/firestore'
@@ -98,7 +98,12 @@ function App() {
   // --- FIREBASE FIRESTORE LOGIC ---
   const [messages, setMessages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [commentInput, setCommentInput] = useState('');
   
+  // Comment editing local states
+  const [editingCommentIndex, setEditingCommentIndex] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+
   const [myPostIds, setMyPostIds] = useState(() => {
     const savedIds = localStorage.getItem('my_created_posts');
     return savedIds ? JSON.parse(savedIds) : [];
@@ -157,6 +162,7 @@ function App() {
         body: formData.body,
         author: globalAuthor,
         reactions: { heart: 0, haha: 0 }, 
+        comments: [], 
         createdAt: serverTimestamp()
       });
 
@@ -169,7 +175,7 @@ function App() {
     }
   };
 
-  // --- SOUPED UP OPTIMISTIC REACTION HANDLER (ULTRA SMOOTH) ---
+  // --- OPTIMISTIC REACTION HANDLER ---
   const handleToggleReaction = async (e, messageId, reactionType) => {
     if (e) {
       e.preventDefault();
@@ -178,7 +184,6 @@ function App() {
     
     const hasReacted = myReactions[messageId]?.[reactionType] || false;
 
-    // 1. INSTANT LOCAL STATE UPDATE (Para sa instant active/inactive color at style transformation)
     setMyReactions(prev => {
       const currentMsgReactions = prev[messageId] || { heart: false, haha: false };
       return {
@@ -187,7 +192,6 @@ function App() {
       };
     });
 
-    // 2. OPTIMISTIC COUNTER UPDATE (Pinapagana agad ang counter sa screen bago pa mag-save sa DB)
     setMessages(prevMessages => 
       prevMessages.map(msg => {
         if (msg.id === messageId) {
@@ -205,7 +209,6 @@ function App() {
       })
     );
 
-    // 3. SILENT BACKEND TRANSACTION (Tumatakbo sa background nang walang UI lagging)
     try {
       const messageDocRef = doc(db, 'messages', messageId);
       await runTransaction(db, async (transaction) => {
@@ -226,32 +229,127 @@ function App() {
       });
     } catch (error) {
       console.error("Failed to update reaction counter: ", error);
-      
-      // Automatic Revert kapag nagkaproblema ang network para tama pa rin ang data
-      setMyReactions(prev => {
-        const currentMsgReactions = prev[messageId] || { heart: false, haha: false };
-        return {
-          ...prev,
-          [messageId]: { ...currentMsgReactions, [reactionType]: hasReacted }
-        };
-      });
+    }
+  };
 
-      setMessages(prevMessages => 
-        prevMessages.map(msg => {
-          if (msg.id === messageId) {
-            const currentReactions = msg.reactions || { heart: 0, haha: 0 };
-            const currentCount = currentReactions[reactionType] || 0;
-            return {
-              ...msg,
-              reactions: {
-                ...currentReactions,
-                [reactionType]: hasReacted ? currentCount + 1 : Math.max(0, currentCount - 1)
-              }
-            };
+  // --- ADD COMMENT ---
+  const handleSubmitComment = async (e, messageId) => {
+    e.preventDefault();
+    if (!commentInput.trim() || !globalAuthor) return;
+
+    const tempCommentText = commentInput.trim();
+    setCommentInput(''); 
+
+    const newCommentObj = {
+      author: globalAuthor,
+      text: tempCommentText,
+      timestamp: new Date().toISOString()
+    };
+
+    setMessages(prevMessages => 
+      prevMessages.map(msg => {
+        if (msg.id === messageId) {
+          const existingComments = msg.comments || [];
+          return { ...msg, comments: [...existingComments, newCommentObj] };
+        }
+        return msg;
+      })
+    );
+
+    try {
+      const messageDocRef = doc(db, 'messages', messageId);
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(messageDocRef);
+        if (!sfDoc.exists()) return;
+
+        const data = sfDoc.data();
+        const currentComments = data.comments || [];
+
+        transaction.update(messageDocRef, {
+          comments: [...currentComments, newCommentObj]
+        });
+      });
+    } catch (error) {
+      console.error("Error saving comment to DB: ", error);
+    }
+  };
+
+  // --- DELETE COMMENT ---
+  const handleDeleteComment = async (messageId, commentIndex) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => {
+        if (msg.id === messageId) {
+          const filteredComments = (msg.comments || []).filter((_, idx) => idx !== commentIndex);
+          return { ...msg, comments: filteredComments };
+        }
+        return msg;
+      })
+    );
+
+    try {
+      const messageDocRef = doc(db, 'messages', messageId);
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(messageDocRef);
+        if (!sfDoc.exists()) return;
+
+        const data = sfDoc.data();
+        const currentComments = data.comments || [];
+        const updatedComments = currentComments.filter((_, idx) => idx !== commentIndex);
+
+        transaction.update(messageDocRef, { comments: updatedComments });
+      });
+    } catch (error) {
+      console.error("Error deleting comment in backend: ", error);
+    }
+  };
+
+  // --- START EDIT COMMENT CONFIG ---
+  const startEditingComment = (index, currentText) => {
+    setEditingCommentIndex(index);
+    setEditingCommentText(currentText);
+  };
+
+  // --- SAVE EDITED COMMENT (REMOVED SIGNATURE EDITED FLAG PER INSTRUCTION) ---
+  const handleSaveEditedComment = async (messageId, commentIndex) => {
+    if (!editingCommentText.trim()) return;
+
+    const textToSave = editingCommentText.trim();
+    setEditingCommentIndex(null); 
+
+    setMessages(prevMessages => 
+      prevMessages.map(msg => {
+        if (msg.id === messageId) {
+          const updatedComments = (msg.comments || []).map((cmt, idx) => {
+            if (idx === commentIndex) {
+              return { ...cmt, text: textToSave };
+            }
+            return cmt;
+          });
+          return { ...msg, comments: updatedComments };
+        }
+        return msg;
+      })
+    );
+
+    try {
+      const messageDocRef = doc(db, 'messages', messageId);
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(messageDocRef);
+        if (!sfDoc.exists()) return;
+
+        const data = sfDoc.data();
+        const currentComments = data.comments || [];
+        const updatedComments = currentComments.map((cmt, idx) => {
+          if (idx === commentIndex) {
+            return { ...cmt, text: textToSave };
           }
-          return msg;
-        })
-      );
+          return cmt;
+        });
+
+        transaction.update(messageDocRef, { comments: updatedComments });
+      });
+    } catch (error) {
+      console.error("Error saving edited comment in backend: ", error);
     }
   };
 
@@ -288,93 +386,111 @@ function App() {
 
   const collageVideos = [video1, video2, video3, video4, video5]
 
-  const [translateX, setTranslateX] = useState(0);
-  const [msgTranslateX, setMsgTranslateX] = useState(0);
-  
-  const isPaused = useRef(false);
-  const isMsgPaused = useRef(false);
-  
-  const trackRef = useRef(null);
-  const msgTrackRef = useRef(null);
+  // --- DYNAMIC PAUSABLE MARQUEE WITH MANUAL GESTURE TRACKING ---
+  const useHybridSlider = () => {
+    const trackRef = useRef(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const startX = useRef(0);
+    const scrollLeft = useRef(0);
 
-  useEffect(() => {
-    let animationFrameId;
-    const slowSpeed = 0.25;
-
-    const updateMarquee = () => {
-      if (!isPaused.current && trackRef.current) {
-        const halfWidth = trackRef.current.scrollWidth / 2;
-        setTranslateX((prev) => {
-          const next = prev - slowSpeed;
-          if (Math.abs(next) >= halfWidth) return 0;
-          return next;
-        });
-      }
-      
-      if (!isMsgPaused.current && msgTrackRef.current) {
-        const maxScroll = msgTrackRef.current.scrollWidth - msgTrackRef.current.clientWidth;
-        if (maxScroll > 0) {
-          setMsgTranslateX((prev) => {
-            const next = prev - slowSpeed;
-            if (Math.abs(next) >= maxScroll) return 0;
-            return next;
-          });
-        }
-      }
-
-      animationFrameId = requestAnimationFrame(updateMarquee);
+    const onMouseDown = (e) => {
+      setIsDragging(true);
+      startX.current = e.pageX - trackRef.current.offsetLeft;
+      scrollLeft.current = trackRef.current.scrollLeft;
     };
 
-    animationFrameId = requestAnimationFrame(updateMarquee);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+    const onMouseMove = (e) => {
+      if (!startX.current || !isDragging) return;
+      e.preventDefault();
+      const x = e.pageX - trackRef.current.offsetLeft;
+      const walk = (x - startX.current) * 1.5; 
+      trackRef.current.scrollLeft = scrollLeft.current - walk;
+    };
 
-  const handleScrollButton = (direction) => {
-    isPaused.current = true;
-    const shiftAmount = window.innerWidth < 768 ? 290 : 352;
-    setTranslateX((prev) => {
-      let updatedOffset = direction === 'left' ? prev + shiftAmount : prev - shiftAmount;
-      if (updatedOffset > 0) updatedOffset = 0;
-      return updatedOffset;
-    });
-    setTimeout(() => { isPaused.current = false; }, 3000);
+    const stopDragging = () => {
+      setIsDragging(false);
+    };
+
+    const onTouchStart = (e) => {
+      setIsDragging(true);
+      startX.current = e.touches[0].pageX - trackRef.current.offsetLeft;
+      scrollLeft.current = trackRef.current.scrollLeft;
+    };
+
+    const onTouchMove = (e) => {
+      if (!isDragging) return;
+      const x = e.touches[0].pageX - trackRef.current.offsetLeft;
+      const walk = (x - startX.current) * 1.5;
+      trackRef.current.scrollLeft = scrollLeft.current - walk;
+    };
+
+    return {
+      ref: trackRef,
+      onMouseDown,
+      onMouseMove,
+      onMouseUp: stopDragging,
+      onMouseLeave: stopDragging,
+      onTouchStart,
+      onTouchMove,
+      onTouchEnd: stopDragging,
+      // Kung naka drag, hihinto ang CSS transformation marquee loop
+      className: `flex gap-5 md:gap-8 overflow-x-auto select-none no-scrollbar cursor-grab active:cursor-grabbing ${isDragging ? 'pause-marquee' : ''}`
+    };
   };
 
-  const handleMsgScrollButton = (direction) => {
-    isMsgPaused.current = true;
-    const shiftAmount = window.innerWidth < 768 ? 300 : 420;
-    setMsgTranslateX((prev) => {
-      let updatedOffset = direction === 'left' ? prev + shiftAmount : prev - shiftAmount;
-      if (updatedOffset > 0) updatedOffset = 0;
-      return updatedOffset;
-    });
-    setTimeout(() => { isMsgPaused.current = false; }, 3000);
+  const graduatesSlider = useHybridSlider();
+  const photoSlider = useHybridSlider();
+  const videoSlider = useHybridSlider();
+  const lettersSlider = useHybridSlider();
+
+  const handleArrowNav = (sliderRef, direction) => {
+    const shift = window.innerWidth < 768 ? 290 : 360;
+    if (sliderRef.current) {
+      sliderRef.current.scrollLeft += direction === 'left' ? -shift : shift;
+    }
   };
 
-  // Kinukuha ang current memory item data para laging responsive at sync ang open view profile modal
   const activeSelectedMessageData = selectedMessage ? messages.find(m => m.id === selectedMessage.id) : null;
 
   return (
     <div className="min-h-screen bg-[#fbfaf7] text-[#191919] font-sans antialiased selection:bg-[#f1ece4] overflow-x-hidden">
       
       <style>{`
-        @keyframes marqueeLeft { 0% { transform: translateX(0%); } 100% { transform: translateX(-50%); } }
-        @keyframes marqueeRight { 0% { transform: translateX(-50%); } 100% { transform: translateX(0%); } }
-        .animate-marquee-left { display: flex; width: max-content; animation: marqueeLeft 140s linear infinite; }
-        .animate-marquee-right { display: flex; width: max-content; animation: marqueeRight 140s linear infinite; }
-        .animate-marquee-left:hover, .animate-marquee-right:hover { animation-play-state: paused; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scroll-width: none; }
+
+        /* Smooth Marquee Animations */
+        @keyframes customMarquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        @keyframes customMarqueeReverse {
+          0% { transform: translateX(-50%); }
+          100% { transform: translateX(0); }
+        }
+
+        .animate-loop-left { display: flex; width: max-content; animation: customMarquee 120s linear infinite; }
+        .animate-loop-right { display: flex; width: max-content; animation: customMarqueeReverse 120s linear infinite; }
+        
+        /* Instant Pause rules kapag hinawakan o hinover */
+        .pause-marquee .animate-loop-left,
+        .pause-marquee .animate-loop-right,
+        .animate-loop-left:hover,
+        .animate-loop-right:hover {
+          animation-play-state: paused !important;
+        }
       `}</style>
 
       {/* --- INITIAL NAME POP-UP MODAL --- */}
       {!globalAuthor && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#fbfaf7]/80 backdrop-blur-xl">
           <div className="bg-white max-w-md w-full rounded-3xl p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(40,35,30,0.12)] text-center">
-            {/* <span className="text-4xl block mb-4">✨</span> */}
-            <h3 className="font-serif text-2xl font-normal text-[#1a1a1a] mb-2">COLLEGE ARCHIVE</h3>
-            <p className="text-xs text-[#66635e] leading-relaxed mb-6"></p>
+            <span className="text-4xl block mb-4">✨</span>
+            <h3 className="font-serif text-2xl font-normal text-[#1a1a1a] mb-2">Welcome, Graduate!</h3>
+            <p className="text-xs text-[#66635e] leading-relaxed mb-6">Please enter your name to unlock the Batch 2026 gallery and memory archive system.</p>
             <form onSubmit={handleSaveName} className="space-y-4">
-              <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Your name" required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#5c4e3c] text-center font-medium" />
-              <button type="submit" className="w-full bg-[#5c4e3c] text-white py-3 rounded-xl text-xs font-semibold hover:bg-[#473b2c] shadow-sm uppercase tracking-wider transition-colors">Enter</button>
+              <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Enter your full name..." required className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#5c4e3c] text-center font-medium" />
+              <button type="submit" className="w-full bg-[#5c4e3c] text-white py-3 rounded-xl text-xs font-semibold hover:bg-[#473b2c] shadow-sm uppercase tracking-wider transition-colors">Explore Archive</button>
             </form>
           </div>
         </div>
@@ -395,38 +511,128 @@ function App() {
         </div>
       )}
 
-      {/* --- MESSAGE VIEW POP-UP MODAL --- */}
+      {/* --- MESSAGE & COMMENTS POP-UP MODAL --- */}
       {selectedMessage !== null && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md" onClick={() => setSelectedMessage(null)}>
-          <div className="bg-[#fdfdfc] max-w-lg w-full rounded-2xl p-6 md:p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.16)] relative animate-fade-in animate-duration-200" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setSelectedMessage(null)} className="absolute top-5 right-5 text-[#8c7e6b] hover:text-[#1a1a1a] p-1.5 rounded-full hover:bg-[#f4f0e8] transition-all duration-200">
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/30 backdrop-blur-md" onClick={() => { setSelectedMessage(null); setEditingCommentIndex(null); }}>
+          <div className="bg-[#fdfdfc] max-w-xl w-full rounded-2xl p-6 md:p-8 border border-[#decbba] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.16)] relative flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => { setSelectedMessage(null); setEditingCommentIndex(null); }} className="absolute top-5 right-5 text-[#8c7e6b] hover:text-[#1a1a1a] p-1.5 rounded-full hover:bg-[#f4f0e8] transition-all duration-200">
               <X size={18} />
             </button>
-            <div className="mt-2">
-              <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mb-4 pr-6 leading-tight">{selectedMessage.title}</h3>
-              <div className="w-10 h-[2px] bg-[#5c4e3c] mb-5" />
-              <p className="text-[#3b3935] text-sm md:text-base leading-relaxed font-light text-justify max-h-[50vh] overflow-y-auto pr-2 whitespace-pre-wrap">{selectedMessage.body}</p>
+            
+            <div className="overflow-y-auto pr-1 flex-1 space-y-5 custom-scrollbar">
+              <div className="mt-2">
+                <h3 className="font-serif text-xl md:text-2xl font-normal text-[#1a1a1a] mb-3 pr-6 leading-tight">{selectedMessage.title}</h3>
+                <div className="w-10 h-[2px] bg-[#5c4e3c] mb-4" />
+                <p className="text-[#3b3935] text-sm md:text-base leading-relaxed font-light text-justify whitespace-pre-wrap">{selectedMessage.body}</p>
+                <div className="mt-3 text-right">
+                  <span className="font-serif italic text-sm text-[#8c7e6b]">— {selectedMessage.author}</span>
+                </div>
+              </div>
+
+              {/* Reaction Section */}
+              <div className="flex gap-2.5 items-center pt-3 border-t border-[#f4f0e8]">
+                <button 
+                  onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'heart')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
+                >
+                  <span>❤️</span> <span>{activeSelectedMessageData?.reactions?.heart || 0}</span>
+                </button>
+                <button 
+                  onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'haha')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
+                >
+                  <span>😂</span> <span>{activeSelectedMessageData?.reactions?.haha || 0}</span>
+                </button>
+              </div>
+
+              {/* Comment Section List */}
+              <div className="pt-4 border-t border-[#f4f0e8]">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#787266] mb-3 flex items-center gap-1.5">
+                  <MessageSquare size={13} /> Comments ({activeSelectedMessageData?.comments?.length || 0})
+                </h4>
+                
+                <div className="space-y-2.5 max-h-[240px] overflow-y-auto pr-1">
+                  {activeSelectedMessageData?.comments && activeSelectedMessageData.comments.length > 0 ? (
+                    activeSelectedMessageData.comments.map((cmt, cIdx) => (
+                      <div key={`modal-cmt-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/80 rounded-xl p-3 text-left relative group/cmt">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                          <span className="text-[9px] font-mono text-[#a39a8c]">
+                            {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                          </span>
+                        </div>
+                        
+                        {editingCommentIndex === cIdx ? (
+                          <div className="flex gap-2 mt-2 items-center">
+                            <input 
+                              type="text" 
+                              value={editingCommentText} 
+                              onChange={(e) => setEditingCommentText(e.target.value)} 
+                              maxLength={300}
+                              className="flex-1 bg-white border border-[#decbba] rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#5c4e3c]"
+                            />
+                            <button 
+                              onClick={() => handleSaveEditedComment(selectedMessage.id, cIdx)} 
+                              className="bg-emerald-600 text-white p-1.5 rounded-lg hover:bg-emerald-700 transition-colors"
+                            >
+                              <Check size={12} />
+                            </button>
+                            <button 
+                              onClick={() => setEditingCommentIndex(null)} 
+                              className="bg-gray-100 text-gray-500 p-1.5 rounded-lg hover:bg-gray-200 transition-colors"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-[#4a4742] text-xs font-light leading-relaxed whitespace-pre-wrap pr-12">{cmt.text}</p>
+                            
+                            {cmt.author === globalAuthor && (
+                              <div className="absolute right-2.5 bottom-2 flex items-center gap-1 opacity-0 group-hover/cmt:opacity-100 transition-opacity duration-200">
+                                <button 
+                                  onClick={() => startEditingComment(cIdx, cmt.text)}
+                                  className="text-[#8c7e6b] hover:text-[#5c4e3c] p-1 rounded-md hover:bg-[#f4f0e8] transition-colors"
+                                  title="Edit comment"
+                                >
+                                  <Edit3 size={11} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteComment(selectedMessage.id, cIdx)}
+                                  className="text-red-400 hover:text-red-600 p-1 rounded-md hover:bg-red-50 transition-colors"
+                                  title="Delete comment"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-4 bg-[#fbfaf7] rounded-xl border border-dashed border-[#decbba] text-xs font-serif italic text-[#8c7e6b]">
+                      No conversations yet. Be the first to drop a comment!
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* --- REACTION BUTTONS INSIDE MODAL (ULTRA SMOOTH OPTIMISTIC UI) --- */}
-            <div className="mt-8 flex gap-2.5 items-center">
-              <button 
-                onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'heart')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
-              >
-                <span>❤️</span> <span>{activeSelectedMessageData?.reactions?.heart || 0}</span>
+            <form onSubmit={(e) => handleSubmitComment(e, selectedMessage.id)} className="mt-4 pt-3 border-t border-[#f4f0e8] flex gap-2 items-center">
+              <input 
+                type="text" 
+                value={commentInput}
+                onChange={(e) => setCommentInput(e.target.value)}
+                placeholder="Write a supportive reply..." 
+                maxLength={300}
+                required
+                className="flex-1 bg-[#fbfaf7] border border-[#decbba] rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[#5c4e3c]"
+              />
+              <button type="submit" className="bg-[#5c4e3c] text-white p-2.5 rounded-xl hover:bg-[#473b2c] transition-colors shadow-sm flex items-center justify-center flex-shrink-0">
+                <Send size={14} />
               </button>
-              <button 
-                onClick={(e) => handleToggleReaction(e, selectedMessage.id, 'haha')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all duration-200 ease-out border select-none ${myReactions[selectedMessage.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#decbba] text-[#66635e] hover:bg-gray-50 active:scale-95'}`}
-              >
-                <span>😂</span> <span>{activeSelectedMessageData?.reactions?.haha || 0}</span>
-              </button>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-[#f4f0e8] text-right">
-              <span className="font-serif italic text-sm text-[#8c7e6b]">— {selectedMessage.author}</span>
-            </div>
+            </form>
           </div>
         </div>
       )}
@@ -434,7 +640,7 @@ function App() {
       {/* --- HERO SECTION --- */}
       <header className="max-w-5xl mx-auto text-center pt-28 md:pt-36 pb-16 md:pb-20 px-6">
         <div className="flex flex-col relative items-center justify-center gap-2 mb-4">
-          <div className="text-5xl absolute -top-8 md:text-7xl duration-1000">🎓</div>
+          <div className="text-5xl absolute -top-8 md:text-7xl">🎓</div>
           <h1 className="font-serif text-5xl md:text-8xl font-normal tracking-tight text-[#1a1a1a] leading-none">Batch 2026</h1>
         </div>
         <p className="text-[#66635e] font-serif italic text-lg md:text-2xl max-w-2xl mx-auto font-light leading-relaxed">A widescreen, living archive of our shared, unforgettable journey.</p>
@@ -445,14 +651,12 @@ function App() {
         )}
       </header>
 
-      {/* --- OFFICIAL VIDEO SECTION --- */}
-      <section className="w-full relative mb-24 md:mb-32 py-10 md:py-16 bg-[#f5f1e9]/40 border-y border-[#e8e2d5]/60">
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 overflow-hidden pointer-events-none z-0 opacity-20 filter grayscale">
-          <div className="animate-marquee-left gap-4 md:gap-8 py-4">
-            {marqueeImages.map((src, idx) => (
-              <img key={`large-m1-${idx}`} src={src} alt="Memory backdrop" className="w-52 h-36 md:w-72 md:h-48 object-cover rounded-xl border border-[#dcd5c9]" />
-            ))}
-          </div>
+      {/* --- OFFICIAL VIDEO COMPILATION FLAG --- */}
+      <section className="w-full relative mb-24 md:mb-32 py-10 md:py-16 bg-[#f5f1e9]/40 border-y border-[#e8e2d5]/60 overflow-hidden">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 overflow-hidden pointer-events-none z-0 opacity-10 filter grayscale flex gap-6 w-max">
+          {marqueeImages.slice(0, 8).map((src, idx) => (
+            <img key={`backdrop-img-${idx}`} src={src} alt="Memory backdrop" className="w-52 h-36 md:w-72 md:h-48 object-cover rounded-xl border border-[#dcd5c9]" />
+          ))}
         </div>
         <div className="max-w-5xl mx-auto px-4 md:px-6 relative z-10">
           <div className="relative min-h-[340px] md:aspect-video w-full rounded-2xl md:rounded-3xl bg-[#fdfdfc]/90 backdrop-blur-xl border border-[#decbba] shadow-[0_24px_48px_-12px_rgba(40,35,30,0.06)] flex items-center justify-center overflow-hidden group hover:border-[#bfae99] transition-all duration-500">
@@ -479,7 +683,7 @@ function App() {
         </div>
       </section>
 
-      {/* --- GRADUATES SECTION --- */}
+      {/* --- GRADUATES SECTION (ANIMATED + DRAGGABLE) --- */}
       <section className="w-full bg-[#fbfaf7] mb-20 md:mb-28 relative overflow-hidden">
         <div className="max-w-5xl mx-auto px-6 mb-10 flex items-center justify-between">
           <div className="flex items-center gap-6 w-full">
@@ -487,59 +691,80 @@ function App() {
             <div className="w-full h-[1px] bg-[#e8e2d5]" />
           </div>
         </div>
-        <div className="relative w-full px-4 md:px-12 select-none">
-          <button onClick={() => handleScrollButton('left')} className="absolute left-6 md:left-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={20} /></button>
-          <button onClick={() => handleScrollButton('right')} className="absolute right-6 md:right-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 backdrop-blur-md border border-[#e8e2d5] text-[#1a1a1a] shadow-2xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={20} /></button>
-          <div className="w-full overflow-hidden py-4 px-2">
-            <div ref={trackRef} onMouseEnter={() => { isPaused.current = true }} onMouseLeave={() => { isPaused.current = false }} className="flex gap-5 md:gap-8 will-change-transform" style={{ transform: `translateX(${translateX}px)`, transition: isPaused.current ? 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)' : 'none' }}>
-              {graduates.map((grad) => (
-                <div key={`set1-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] group">
-                  <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110" draggable="false" /></div>
-                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
-                    <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
-                    <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
-                    <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5 transition-all duration-500 ease-out group-hover:w-16" />
-                    <p className="font-serif text-[12px] md:text-[13.5px] text-[#e0deda]/95 italic leading-relaxed line-clamp-3">"{grad.quote}"</p>
+        <div className="relative w-full px-4 md:px-12">
+          <button onClick={() => handleArrowNav(graduatesSlider.ref, 'left')} className="absolute left-6 md:left-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={20} /></button>
+          <button onClick={() => handleArrowNav(graduatesSlider.ref, 'right')} className="absolute right-6 md:right-14 top-1/2 -translate-y-1/2 z-30 p-3 md:p-4 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={20} /></button>
+          
+          <div className="w-full py-4 px-2">
+            <div {...graduatesSlider}>
+              <div className="animate-loop-left gap-5 md:gap-8">
+                {graduates.map((grad, i) => (
+                  <div key={`grad-set1-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] pointer-events-none select-none">
+                    <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02]" draggable="false" /></div>
+                    <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
+                      <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
+                      <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
+                      <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5" />
+                      <p className="font-serif text-[12px] md:text-[13.5px] text-[#e0deda]/95 italic leading-relaxed line-clamp-3">"{grad.quote}"</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-              {graduates.map((grad) => (
-                <div key={`set2-${grad.id}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] group">
-                  <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02] transition-transform duration-1000 ease-out group-hover:scale-110" draggable="false" /></div>
-                  <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
-                    <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
-                    <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
-                    <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5 transition-all duration-500 ease-out group-hover:w-16" />
-                    <p className="font-serif text-[12px] md:text-[13.5px] text-[#e0deda]/95 italic leading-relaxed line-clamp-3">"{grad.quote}"</p>
+                ))}
+                {/* Marquee Infinite Clone */}
+                {graduates.map((grad, i) => (
+                  <div key={`grad-set2-${grad.id}-${i}`} className="w-[270px] md:w-[320px] h-[430px] md:h-[500px] rounded-[2rem] overflow-hidden relative border border-[#e8e2d5] flex-shrink-0 bg-[#f5f1e9] pointer-events-none select-none">
+                    <div className="absolute inset-0 w-full h-full"><img src={grad.image} alt={grad.name} className="w-full h-full object-cover object-top filter contrast-[1.01] saturate-[1.02]" draggable="false" /></div>
+                    <div className="absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4 rounded-[1.5rem] bg-black/40 backdrop-blur-md border border-white/10 p-5 md:p-6 text-left flex flex-col justify-end">
+                      <span className="text-[9px] md:text-[10px] font-bold text-[#ebdccb] tracking-widest uppercase mb-1 md:mb-1.5 opacity-90">{grad.course}</span>
+                      <h3 className="font-serif text-xl md:text-2xl font-normal text-white mb-2 md:mb-3 tracking-tight leading-tight">{grad.name}</h3>
+                      <div className="w-6 h-[1.5px] bg-[#ebdccb]/60 mb-2.5 md:mb-3.5" />
+                      <p className="font-serif text-[12px] md:text-[13.5px] text-[#e0deda]/95 italic leading-relaxed line-clamp-3">"{grad.quote}"</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* --- PHOTO COLLAGE --- */}
-      <section className="w-full overflow-hidden">
-        <div className="animate-marquee-right gap-4 md:gap-6 px-4">
-          {collageImages.map((src, idx) => (
-            <div key={`col1-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
-              <img src={src} alt={`Memory ${idx + 1}`} className="w-full h-64 md:h-80 object-cover rounded-lg mb-3" />
-              <div className="h-1.5 md:h-2 w-12 md:w-16 bg-[#ebdccb]/50 rounded-full mx-auto" />
-            </div>
-          ))}
+      {/* --- PHOTO COLLAGE (ANIMATED + DRAGGABLE) --- */}
+      <section className="w-full overflow-hidden px-4 md:px-12 mb-4">
+        <div {...photoSlider}>
+          <div className="animate-loop-right gap-4 md:gap-6">
+            {collageImages.map((src, idx) => (
+              <div key={`photo-c1-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 pointer-events-none select-none">
+                <img src={src} alt={`Memory ${idx + 1}`} className="w-full h-64 md:h-80 object-cover rounded-lg mb-3" draggable="false" />
+                <div className="h-1.5 md:h-2 w-12 md:w-16 bg-[#ebdccb]/50 rounded-full mx-auto" />
+              </div>
+            ))}
+            {collageImages.map((src, idx) => (
+              <div key={`photo-c2-${idx}`} className="w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 pointer-events-none select-none">
+                <img src={src} alt={`Memory clone ${idx + 1}`} className="w-full h-64 md:h-80 object-cover rounded-lg mb-3" draggable="false" />
+                <div className="h-1.5 md:h-2 w-12 md:w-16 bg-[#ebdccb]/50 rounded-full mx-auto" />
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* --- VIDEO COLLAGE --- */}
-      <section className="w-full bg-[#f4f0e8]/30 pb-12 pt-4">
-        <div className="w-full overflow-hidden">
-          <div className="animate-marquee-left gap-4 md:gap-6 px-4">
+      {/* --- VIDEO COLLAGE (ANIMATED + DRAGGABLE) --- */}
+      <section className="w-full bg-[#f4f0e8]/30 pb-12 pt-6 px-4 md:px-12">
+        <div {...videoSlider}>
+          <div className="animate-loop-left gap-4 md:gap-6">
             {collageVideos.map((src, idx) => (
-              <div key={`vid1-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0">
-                <video ref={(el) => (videoRefs.current[idx] = el)} src={src} autoPlay loop muted={activeVideoIndex !== idx} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9]" />
-                <button onClick={(e) => { e.stopPropagation(); toggleMute(idx); }} className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center z-10">
-                  {activeVideoIndex === idx ? <Volume2 size={16} /> : <VolumeOff size={16} />}
+              <div key={`video-c1-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 select-none">
+                <video ref={(el) => (videoRefs.current[`v1-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v1-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9] pointer-events-none" />
+                <button onClick={(e) => { e.stopPropagation(); toggleMute(`v1-${idx}`); }} className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center z-10 cursor-pointer">
+                  {activeVideoIndex === `v1-${idx}` ? <Volume2 size={16} /> : <VolumeOff size={16} />}
+                </button>
+                <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
+              </div>
+            ))}
+            {collageVideos.map((src, idx) => (
+              <div key={`video-c2-${idx}`} className="relative w-48 md:w-60 bg-[#fdfdfc] p-2 md:p-3 pb-5 md:pb-6 rounded-xl border border-[#e3dac9] shadow-md flex-shrink-0 select-none">
+                <video ref={(el) => (videoRefs.current[`v2-${idx}`] = el)} src={src} autoPlay loop muted={activeVideoIndex !== `v2-${idx}`} playsInline className="w-full h-64 md:h-80 object-cover rounded-lg mb-3 bg-[#f5f1e9] pointer-events-none" />
+                <button onClick={(e) => { e.stopPropagation(); toggleMute(`v2-${idx}`); }} className="absolute top-4 right-4 bg-black/60 text-white text-xs w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center z-10 cursor-pointer">
+                  {activeVideoIndex === `v2-${idx}` ? <Volume2 size={16} /> : <VolumeOff size={16} />}
                 </button>
                 <div className="h-1.5 md:h-2 w-16 md:w-20 bg-[#ebdccb]/70 rounded-full mx-auto" />
               </div>
@@ -548,75 +773,106 @@ function App() {
         </div>
       </section>
 
-      {/* --- LETTERS & REFLECTIONS SECTION --- */}
-      <section className="max-w-5xl mx-auto px-6 mb-24 md:mb-32">
+      {/* --- LETTERS & REFLECTIONS SECTION (ANIMATED + DRAGGABLE) --- */}
+      <section className="max-w-5xl mx-auto px-6 mb-24 md:mb-32 mt-16">
         <div className="flex items-center gap-6 mb-12 md:mb-16">
           <h2 className="font-serif text-2xl md:text-4xl font-normal tracking-tight text-[#1a1a1a] whitespace-nowrap">Letters & Reflections</h2>
           <div className="w-full h-[1px] bg-[#e8e2d5]" />
         </div>
 
-        {/* --- MESSAGES SLIDER --- */}
-        <div className="relative w-full px-4 select-none mb-14">
-          <button onClick={() => handleMsgScrollButton('left')} className="absolute left-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={18} /></button>
-          <button onClick={() => handleMsgScrollButton('right')} className="absolute right-0 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={18} /></button>
+        <div className="relative w-full px-4 mb-14">
+          <button onClick={() => handleArrowNav(lettersSlider.ref, 'left')} className="absolute -left-2 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronLeft size={18} /></button>
+          <button onClick={() => handleArrowNav(lettersSlider.ref, 'right')} className="absolute -right-2 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-white/95 border border-[#e8e2d5] text-[#1a1a1a] shadow-xl hover:bg-[#5c4e3c] hover:text-white transition-all duration-300"><ChevronRight size={18} /></button>
 
-          <div className="w-full overflow-hidden py-4">
-            <div 
-              ref={msgTrackRef}
-              onMouseEnter={() => { isMsgPaused.current = true }}
-              onMouseLeave={() => { isMsgPaused.current = false }}
-              className="flex gap-6 will-change-transform"
-              style={{ 
-                transform: `translateX(${msgTranslateX}px)`,
-                transition: isMsgPaused.current ? 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1)' : 'none' 
-              }}
-            >
-              {messages.length > 0 ? (
-                <>
-                  {messages.map((msg, index) => (
-                    <div 
-                      key={`msg-${msg.id}-${index}`} 
-                      onClick={() => setSelectedMessage(msg)}
-                      className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0"
-                    >
-                      {myPostIds.includes(msg.id) && (
-                        <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                      <div>
-                        <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
-                        <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
-                      </div>
-                      
-                      {/* --- CARD REACTION BUTTONS (ULTRA SMOOTH OPTIMISTIC UI) --- */}
-                      <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
-                        <div className="flex gap-2 relative z-20">
-                          <button 
-                            onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                          >
-                            <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+          <div className="w-full py-4">
+            <div {...lettersSlider}>
+              <div className="animate-loop-left gap-6 py-2">
+                {messages.length > 0 ? (
+                  <>
+                    {messages.map((msg, index) => (
+                      <div 
+                        key={`msg-card-s1-${msg.id}-${index}`} 
+                        onClick={() => setSelectedMessage(msg)}
+                        className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0 select-none"
+                      >
+                        {myPostIds.includes(msg.id) && (
+                          <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
+                            <Trash2 size={14} />
                           </button>
-                          
-                          <button 
-                            onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
-                          >
-                            <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
-                          </button>
+                        )}
+                        <div>
+                          <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
+                          <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
                         </div>
                         
-                        <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[120px]">
-                          — {msg.author}
-                        </span>
+                        <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
+                          <div className="flex gap-1.5 relative z-20">
+                            <button 
+                              onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                            >
+                              <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                            </button>
+                            <button 
+                              onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                            >
+                              <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
+                            </button>
+                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-50 border border-gray-200/70 text-[#787266]">
+                              <MessageSquare size={10} className="text-[#8c7e6b]" />
+                              <span>{msg.comments?.length || 0}</span>
+                            </div>
+                          </div>
+                          <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[110px]">— {msg.author}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">Loading shared reflections...</div>
-              )}
+                    ))}
+                    {/* Marquee Infinite Loop Clone for Messages */}
+                    {messages.map((msg, index) => (
+                      <div 
+                        key={`msg-card-s2-${msg.id}-${index}`} 
+                        onClick={() => setSelectedMessage(msg)}
+                        className="w-[290px] md:w-[380px] bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)] flex flex-col justify-between hover:border-[#ccbfad] cursor-pointer hover:shadow-md transition-all duration-300 relative flex-shrink-0 select-none"
+                      >
+                        {myPostIds.includes(msg.id) && (
+                          <button onClick={(e) => requestDeleteMessage(e, msg.id)} className="absolute top-5 right-5 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all duration-200 border border-red-100 z-10">
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                        <div>
+                          <h3 className="font-serif text-lg font-normal text-[#1a1a1a] mt-2 mb-2 line-clamp-1">{msg.title}</h3>
+                          <p className="text-[#524f4a] text-xs leading-relaxed font-light text-justify line-clamp-3 h-[54px] overflow-hidden">{msg.body}</p>
+                        </div>
+                        
+                        <div className="mt-4 pt-3 border-t border-[#f4f0e8] flex items-center justify-between">
+                          <div className="flex gap-1.5 relative z-20">
+                            <button 
+                              onClick={(e) => handleToggleReaction(e, msg.id, 'heart')}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.heart ? 'bg-red-50 text-red-600 border-red-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                            >
+                              <span>❤️</span> <span>{msg.reactions?.heart || 0}</span>
+                            </button>
+                            <button 
+                              onClick={(e) => handleToggleReaction(e, msg.id, 'haha')}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] transition-all duration-200 ease-out border select-none ${myReactions[msg.id]?.haha ? 'bg-amber-50 text-amber-600 border-amber-200 font-medium scale-105 shadow-sm' : 'bg-[#fbfaf7] border-[#e8e2d5] text-[#787266] hover:bg-gray-50 active:scale-95'}`}
+                            >
+                              <span>😂</span> <span>{msg.reactions?.haha || 0}</span>
+                            </button>
+                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-50 border border-gray-200/70 text-[#787266]">
+                              <MessageSquare size={10} className="text-[#8c7e6b]" />
+                              <span>{msg.comments?.length || 0}</span>
+                            </div>
+                          </div>
+                          <span className="font-serif italic text-xs text-[#8c7e6b] truncate pl-2 max-w-[110px]">— {msg.author}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div className="text-center w-full text-xs text-[#8c7e6b] font-serif italic py-6">Loading shared reflections...</div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -624,12 +880,12 @@ function App() {
         {/* --- FORM SUBMISSION BOX --- */}
         <div className="max-w-xl mx-auto bg-[#fdfdfc] border border-[#e8e2d5] rounded-2xl p-6 md:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.01)]">
           <h3 className="font-serif text-xl font-normal text-[#1a1a1a] mb-2">Leave a Message</h3>
-          <p className="text-xs text-[#787266] mb-6 leading-relaxed">Posting as <span className="font-semibold text-[#5c4e3c] font-sans">{globalAuthor}</span>. Share your favorite memories directly to the infinite slider board.</p>
+          <p className="text-xs text-[#787266] mb-6 leading-relaxed">Posting as <span className="font-semibold text-[#5c4e3c] font-sans">{globalAuthor}</span>. Share your favorite memories directly to the board.</p>
           
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
@@ -650,7 +906,7 @@ function App() {
 
       {/* --- FOOTER --- */}
       <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Developed by christian.
+        © 2026 Myrtle Christian School Inc. • Frontend System Archive
       </footer>
 
     </div>
