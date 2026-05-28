@@ -60,6 +60,9 @@ function App() {
 
   // Hawak nito ang ID ng message na kasalukuyang naka-expand ang comment section
   const [expandedMessageId, setExpandedMessageId] = useState(null);
+  
+  // Tagasubaybay kung anong comment ID ang kasalukuyang nakabukas ang floating emoji picker
+  const [activeCommentReactionPicker, setActiveCommentReactionPicker] = useState(null);
 
   const toggleMute = (index) => {
     setActiveVideoIndex((prevIndex) => {
@@ -119,6 +122,12 @@ function App() {
     return savedReactions ? JSON.parse(savedReactions) : {}; 
   });
 
+  // Reactions tracking para sa comments: { [messageId]: { [commentIndex]: { heart: false, haha: false, like: false } } }
+  const [myCommentReactions, setMyCommentReactions] = useState(() => {
+    const savedCommentReactions = localStorage.getItem('my_comment_reactions');
+    return savedCommentReactions ? JSON.parse(savedCommentReactions) : {};
+  });
+
   const [formData, setFormData] = useState({ title: '', body: '' });
   const [deleteTargetId, setDeleteTargetId] = useState(null);
 
@@ -147,6 +156,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('my_reactions', JSON.stringify(myReactions));
   }, [myReactions]);
+
+  useEffect(() => {
+    localStorage.setItem('my_comment_reactions', JSON.stringify(myCommentReactions));
+  }, [myCommentReactions]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -179,7 +192,7 @@ function App() {
     }
   };
 
-  // --- OPTIMISTIC REACTION HANDLER ---
+  // --- OPTIMISTIC REACTION HANDLER PARA SA POSTS ---
   const handleToggleReaction = async (e, messageId, reactionType) => {
     if (e) {
       e.preventDefault();
@@ -236,6 +249,70 @@ function App() {
     }
   };
 
+  // --- OPTIMISTIC REACTION HANDLER PARA SA COMMENTS ---
+  const handleToggleCommentReaction = async (messageId, commentIndex, reactionType) => {
+    const commentKey = `${messageId}-${commentIndex}`;
+    const hasReacted = myCommentReactions[commentKey]?.[reactionType] || false;
+
+    setMyCommentReactions(prev => {
+      const currentCmtReactions = prev[commentKey] || { like: false, heart: false, haha: false };
+      return {
+        ...prev,
+        [commentKey]: { ...currentCmtReactions, [reactionType]: !hasReacted }
+      };
+    });
+
+    setMessages(prevMessages =>
+      prevMessages.map(msg => {
+        if (msg.id === messageId) {
+          const updatedComments = (msg.comments || []).map((cmt, idx) => {
+            if (idx === commentIndex) {
+              const currentReactions = cmt.reactions || { like: 0, heart: 0, haha: 0 };
+              const currentCount = currentReactions[reactionType] || 0;
+              return {
+                ...cmt,
+                reactions: {
+                  ...currentReactions,
+                  [reactionType]: hasReacted ? Math.max(0, currentCount - 1) : currentCount + 1
+                }
+              };
+            }
+            return cmt;
+          });
+          return { ...msg, comments: updatedComments };
+        }
+        return msg;
+      })
+    );
+
+    try {
+      const messageDocRef = doc(db, 'messages', messageId);
+      await runTransaction(db, async (transaction) => {
+        const sfDoc = await transaction.get(messageDocRef);
+        if (!sfDoc.exists()) return;
+
+        const data = sfDoc.data();
+        const currentComments = data.comments || [];
+        
+        if (currentComments[commentIndex]) {
+          const targetComment = currentComments[commentIndex];
+          const currentReactions = targetComment.reactions || { like: 0, heart: 0, haha: 0 };
+          const currentCount = currentReactions[reactionType] || 0;
+          let newCount = hasReacted ? Math.max(0, currentCount - 1) : currentCount + 1;
+
+          targetComment.reactions = {
+            ...currentReactions,
+            [reactionType]: newCount
+          };
+
+          transaction.update(messageDocRef, { comments: currentComments });
+        }
+      });
+    } catch (error) {
+      console.error("Failed to update comment reaction index: ", error);
+    }
+  };
+
   // --- ADD COMMENT ---
   const handleSubmitComment = async (e, messageId) => {
     e.preventDefault();
@@ -247,7 +324,8 @@ function App() {
     const newCommentObj = {
       author: globalAuthor,
       text: tempCommentText,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      reactions: { like: 0, heart: 0, haha: 0 } // Inisyal na reaction structure para sa comment
     };
 
     setMessages(prevMessages => 
@@ -430,8 +508,7 @@ function App() {
     };
 
     const onMouseDown = (e) => {
-      // Kung button o comment box ang clinick, huwag i-trigger ang drag handler ng slider
-      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area')) return;
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area') || e.target.closest('.reaction-picker')) return;
       isDragging.current = true;
       setActiveDragState(true);
       cancelAnimationFrame(animationFrameId.current);
@@ -467,7 +544,7 @@ function App() {
     };
 
     const onTouchStart = (e) => {
-      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area')) return;
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('.comment-box-area') || e.target.closest('.reaction-picker')) return;
       isDragging.current = true;
       setActiveDragState(true);
       cancelAnimationFrame(animationFrameId.current);
@@ -556,6 +633,12 @@ function App() {
           to { opacity: 1; transform: translateY(0); }
         }
         .animate-slideDownInline { animation: slideDownInline 0.25s ease-out forwards; }
+
+        @keyframes bounceShort {
+          0% { transform: translateY(6px) scale(0.92); opacity: 0; }
+          100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .animate-bounce-short { animation: bounceShort 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
       `}</style>
 
       {/* --- INITIAL NAME POP-UP MODAL --- */}
@@ -592,7 +675,7 @@ function App() {
       <div className={`fixed inset-0 z-[110] transition-all duration-500 ease-in-out ${isViewAllOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
         <div 
           onClick={() => setIsViewAllOpen(false)}
-          className={`absolute inset-0 transition-opacity duration-500 ${isViewAllOpen ? 'opacity-100' : 'opacity-0'}`} 
+          className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-500 ${isViewAllOpen ? 'opacity-100' : 'opacity-0'}`} 
         />
         <div className={`absolute right-0 top-0 h-full w-full max-w-md bg-[#fdfdfc] border-l border-[#decbba] shadow-[-16px_0_48px_rgba(40,35,30,0.1)] flex flex-col transition-transform duration-500 ease-out ${isViewAllOpen ? 'translate-x-0' : 'translate-x-full'}`}>
           <div className="p-5 border-b border-[#f4f0e8] flex items-center justify-between">
@@ -659,35 +742,76 @@ function App() {
                           <MessageSquare size={11} /> Conversation Threads
                         </h5>
                         
-                        <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
                           {msg.comments && msg.comments.length > 0 ? (
-                            msg.comments.map((cmt, cIdx) => (
-                              <div key={`drawer-cmt-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-lg p-2.5 relative group/drawerCmt">
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
-                                  <span className="text-[8px] font-mono text-[#a39a8c]">
-                                    {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
-                                  </span>
-                                </div>
-                                {editingCommentIndex === cIdx ? (
-                                  <div className="flex gap-1.5 mt-1 items-center">
-                                    <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
-                                    <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
-                                    <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                            msg.comments.map((cmt, cIdx) => {
+                              const commentKey = `${msg.id}-${cIdx}`;
+                              const activeCmtReactions = cmt.reactions || { like: 0, heart: 0, haha: 0 };
+                              const totalCmtReactions = Object.values(activeCmtReactions).reduce((a, b) => a + b, 0);
+                              const userReactionState = myCommentReactions[commentKey] || { like: false, heart: false, haha: false };
+                              const isPickerOpen = activeCommentReactionPicker === `drawer-${commentKey}`;
+
+                              return (
+                                <div key={`drawer-cmt-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/drawerCmt">
+                                  <div className="flex items-center justify-between mb-0.5">
+                                    <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                    <span className="text-[8px] font-mono text-[#a39a8c]">
+                                      {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                    </span>
                                   </div>
-                                ) : (
-                                  <>
-                                    <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
-                                    {cmt.author === globalAuthor && (
-                                      <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/drawerCmt:opacity-100 transition-opacity">
-                                        <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
-                                        <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                  {editingCommentIndex === cIdx ? (
+                                    <div className="flex gap-1.5 mt-1 items-center">
+                                      <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                      <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                      <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                      
+                                      {/* --- COMMENT SYSTEM BUTTONS & REACTION SYSTEM --- */}
+                                      <div className="mt-1.5 pt-1.5 border-t border-[#f4f0e8]/50 flex items-center justify-between relative">
+                                        <div className="flex items-center gap-2 relative">
+                                          <button 
+                                            onMouseEnter={() => setActiveCommentReactionPicker(`drawer-${commentKey}`)}
+                                            className={`text-[10px] font-medium transition-colors cursor-pointer ${Object.values(userReactionState).some(v => v) ? 'text-blue-600 font-bold' : 'text-gray-400 hover:text-gray-600'}`}
+                                          >
+                                            React
+                                          </button>
+
+                                          {/* Glassmorphic Floating Reaction Picker */}
+                                          {isPickerOpen && (
+                                            <div 
+                                              onMouseLeave={() => setActiveCommentReactionPicker(null)}
+                                              className="absolute bottom-5 left-0 flex items-center gap-2 px-2.5 py-1 bg-white/90 backdrop-blur-md border border-[#decbba]/60 rounded-full shadow-lg z-30 reaction-picker animate-bounce-short"
+                                            >
+                                              <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'like'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">👍</button>
+                                              <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'heart'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">❤️</button>
+                                              <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'haha'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">😂</button>
+                                            </div>
+                                          )}
+
+                                          {/* Render badge display counter if count > 0 */}
+                                          {totalCmtReactions > 0 && (
+                                            <div className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white border border-gray-100 rounded-full text-[9px] shadow-2xs font-mono">
+                                              <span>{activeCmtReactions.like > 0 && '👍'}{activeCmtReactions.heart > 0 && '❤️'}{activeCmtReactions.haha > 0 && '😂'}</span>
+                                              <span className="text-gray-500 font-bold">{totalCmtReactions}</span>
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {cmt.author === globalAuthor && (
+                                          <div className="flex items-center gap-0.5 md:opacity-0 group-hover/drawerCmt:opacity-100 transition-opacity">
+                                            <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                            <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            ))
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })
                           ) : (
                             <div className="text-center py-3 bg-[#fbfaf7] rounded-lg border border-dashed border-[#decbba] text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
                           )}
@@ -927,35 +1051,74 @@ function App() {
                           {/* --- INLINE MAIN MESSAGES LIST COMMENTS DROPDOWN --- */}
                           {isExpanded && (
                             <div className="mt-4 pt-4 border-t border-[#f4f0e8] space-y-3 comment-box-area animate-slideDownInline text-left" onClick={(e) => e.stopPropagation()}>
-                              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                              <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
                                 {msg.comments && msg.comments.length > 0 ? (
-                                  msg.comments.map((cmt, cIdx) => (
-                                    <div key={`inline-cmt-1-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
-                                      <div className="flex items-center justify-between mb-0.5">
-                                        <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
-                                        <span className="text-[8px] font-mono text-[#a39a8c]">
-                                          {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
-                                        </span>
-                                      </div>
-                                      {editingCommentIndex === cIdx ? (
-                                        <div className="flex gap-1.5 mt-1 items-center">
-                                          <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
-                                          <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
-                                          <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                  msg.comments.map((cmt, cIdx) => {
+                                    const commentKey = `${msg.id}-${cIdx}`;
+                                    const activeCmtReactions = cmt.reactions || { like: 0, heart: 0, haha: 0 };
+                                    const totalCmtReactions = Object.values(activeCmtReactions).reduce((a, b) => a + b, 0);
+                                    const userReactionState = myCommentReactions[commentKey] || { like: false, heart: false, haha: false };
+                                    const isPickerOpen = activeCommentReactionPicker === `inline1-${commentKey}`;
+
+                                    return (
+                                      <div key={`inline-cmt-1-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
+                                        <div className="flex items-center justify-between mb-0.5">
+                                          <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                          <span className="text-[8px] font-mono text-[#a39a8c]">
+                                            {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                          </span>
                                         </div>
-                                      ) : (
-                                        <>
-                                          <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
-                                          {cmt.author === globalAuthor && (
-                                            <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
-                                              <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
-                                              <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                        {editingCommentIndex === cIdx ? (
+                                          <div className="flex gap-1.5 mt-1 items-center">
+                                            <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                            <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                            <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                            
+                                            <div className="mt-1.5 pt-1.5 border-t border-[#f4f0e8]/50 flex items-center justify-between relative">
+                                              <div className="flex items-center gap-2 relative">
+                                                <button 
+                                                  onMouseEnter={() => setActiveCommentReactionPicker(`inline1-${commentKey}`)}
+                                                  className={`text-[10px] font-medium transition-colors cursor-pointer ${Object.values(userReactionState).some(v => v) ? 'text-blue-600 font-bold' : 'text-gray-400 hover:text-gray-600'}`}
+                                                >
+                                                  React
+                                                </button>
+
+                                                {/* Floating reaction picker */}
+                                                {isPickerOpen && (
+                                                  <div 
+                                                    onMouseLeave={() => setActiveCommentReactionPicker(null)}
+                                                    className="absolute bottom-5 left-0 flex items-center gap-2 px-2 py-1 bg-white border border-[#decbba]/50 rounded-full shadow-md z-30 reaction-picker animate-bounce-short"
+                                                  >
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'like'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">👍</button>
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'heart'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">❤️</button>
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'haha'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">😂</button>
+                                                  </div>
+                                                )}
+
+                                                {totalCmtReactions > 0 && (
+                                                  <div className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white border border-gray-100 rounded-full text-[9px] shadow-2xs font-mono">
+                                                    <span>{activeCmtReactions.like > 0 && '👍'}{activeCmtReactions.heart > 0 && '❤️'}{activeCmtReactions.haha > 0 && '😂'}</span>
+                                                    <span className="text-gray-500 font-bold">{totalCmtReactions}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              {cmt.author === globalAuthor && (
+                                                <div className="flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
+                                                  <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                                  <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                                </div>
+                                              )}
                                             </div>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  ))
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })
                                 ) : (
                                   <div className="text-center py-2 text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
                                 )}
@@ -1017,35 +1180,74 @@ function App() {
                           {/* --- INLINE MAIN MESSAGES LIST COMMENTS DROPDOWN (CLONE) --- */}
                           {isExpanded && (
                             <div className="mt-4 pt-4 border-t border-[#f4f0e8] space-y-3 comment-box-area animate-slideDownInline text-left" onClick={(e) => e.stopPropagation()}>
-                              <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                              <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
                                 {msg.comments && msg.comments.length > 0 ? (
-                                  msg.comments.map((cmt, cIdx) => (
-                                    <div key={`inline-cmt-2-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
-                                      <div className="flex items-center justify-between mb-0.5">
-                                        <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
-                                        <span className="text-[8px] font-mono text-[#a39a8c]">
-                                          {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
-                                        </span>
-                                      </div>
-                                      {editingCommentIndex === cIdx ? (
-                                        <div className="flex gap-1.5 mt-1 items-center">
-                                          <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
-                                          <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
-                                          <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                  msg.comments.map((cmt, cIdx) => {
+                                    const commentKey = `${msg.id}-${cIdx}`;
+                                    const activeCmtReactions = cmt.reactions || { like: 0, heart: 0, haha: 0 };
+                                    const totalCmtReactions = Object.values(activeCmtReactions).reduce((a, b) => a + b, 0);
+                                    const userReactionState = myCommentReactions[commentKey] || { like: false, heart: false, haha: false };
+                                    const isPickerOpen = activeCommentReactionPicker === `inline2-${commentKey}`;
+
+                                    return (
+                                      <div key={`inline-cmt-2-${cIdx}`} className="bg-[#fbfaf7] border border-[#e8e2d5]/60 rounded-xl p-2.5 relative group/inlineCmt">
+                                        <div className="flex items-center justify-between mb-0.5">
+                                          <span className="text-[11px] font-semibold text-[#5c4e3c]">{cmt.author}</span>
+                                          <span className="text-[8px] font-mono text-[#a39a8c]">
+                                            {cmt.timestamp ? new Date(cmt.timestamp).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Just now'}
+                                          </span>
                                         </div>
-                                      ) : (
-                                        <>
-                                          <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
-                                          {cmt.author === globalAuthor && (
-                                            <div className="absolute right-1.5 bottom-1.5 flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
-                                              <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
-                                              <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                        {editingCommentIndex === cIdx ? (
+                                          <div className="flex gap-1.5 mt-1 items-center">
+                                            <input type="text" value={editingCommentText} onChange={(e) => setEditingCommentText(e.target.value)} className="flex-1 bg-white border border-[#decbba] rounded px-2 py-1 text-[11px] focus:outline-none" />
+                                            <button onClick={() => handleSaveEditedComment(msg.id, cIdx)} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={10} /></button>
+                                            <button onClick={() => setEditingCommentIndex(null)} className="bg-gray-100 text-gray-500 p-1 rounded hover:bg-gray-200"><X size={10} /></button>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <p className="text-[#4a4742] text-[11px] font-light leading-relaxed whitespace-pre-wrap pr-10">{cmt.text}</p>
+                                            
+                                            <div className="mt-1.5 pt-1.5 border-t border-[#f4f0e8]/50 flex items-center justify-between relative">
+                                              <div className="flex items-center gap-2 relative">
+                                                <button 
+                                                  onMouseEnter={() => setActiveCommentReactionPicker(`inline2-${commentKey}`)}
+                                                  className={`text-[10px] font-medium transition-colors cursor-pointer ${Object.values(userReactionState).some(v => v) ? 'text-blue-600 font-bold' : 'text-gray-400 hover:text-gray-600'}`}
+                                                >
+                                                  React
+                                                </button>
+
+                                                {/* Floating picker */}
+                                                {isPickerOpen && (
+                                                  <div 
+                                                    onMouseLeave={() => setActiveCommentReactionPicker(null)}
+                                                    className="absolute bottom-5 left-0 flex items-center gap-2 px-2 py-1 bg-white border border-[#decbba]/50 rounded-full shadow-md z-30 reaction-picker animate-bounce-short"
+                                                  >
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'like'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">👍</button>
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'heart'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">❤️</button>
+                                                    <button onClick={() => { handleToggleCommentReaction(msg.id, cIdx, 'haha'); setActiveCommentReactionPicker(null); }} className="text-sm hover:scale-125 transition-transform">😂</button>
+                                                  </div>
+                                                )}
+
+                                                {totalCmtReactions > 0 && (
+                                                  <div className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white border border-gray-100 rounded-full text-[9px] shadow-2xs font-mono">
+                                                    <span>{activeCmtReactions.like > 0 && '👍'}{activeCmtReactions.heart > 0 && '❤️'}{activeCmtReactions.haha > 0 && '😂'}</span>
+                                                    <span className="text-gray-500 font-bold">{totalCmtReactions}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              {cmt.author === globalAuthor && (
+                                                <div className="flex items-center gap-0.5 opacity-0 group-hover/inlineCmt:opacity-100 transition-opacity">
+                                                  <button onClick={() => startEditingComment(cIdx, cmt.text)} className="text-[#8c7e6b] hover:text-[#5c4e3c] p-0.5 rounded hover:bg-[#f4f0e8]"><Edit3 size={10} /></button>
+                                                  <button onClick={() => handleDeleteComment(msg.id, cIdx)} className="text-red-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"><Trash2 size={10} /></button>
+                                                </div>
+                                              )}
                                             </div>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  ))
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })
                                 ) : (
                                   <div className="text-center py-2 text-[11px] font-serif italic text-[#8c7e6b]">No comments yet.</div>
                                 )}
@@ -1076,7 +1278,7 @@ function App() {
           <form onSubmit={handleSubmitMessage} className="space-y-4">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message Title</label>
-              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my favorite coders" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
+              <input type="text" name="title" value={formData.title} onChange={handleInputChange} placeholder="e.g., To my friends" required disabled={isSubmitting} className="w-full bg-[#fbfaf7] border border-[#decbba] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#5c4e3c] disabled:opacity-60" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-[#8c7e6b] mb-1.5">Message</label>
@@ -1097,7 +1299,7 @@ function App() {
 
       {/* --- FOOTER --- */}
       <footer className="w-full py-8 border-t border-[#e8e2d5] text-center text-[11px] text-[#8c7e6b] tracking-wider uppercase font-mono">
-        © 2026 Myrtle Christian School Inc. • Frontend System Archive
+        © 2026 Developed by christian.
       </footer>
 
     </div>
